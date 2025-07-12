@@ -205,32 +205,38 @@ handleGoogleServiceRedirect(tab.id, "https://drive.google.com/?authuser=2", fals
 - 🚀 **Performance** - Efficient per-service tracking with automatic cleanup
 - 🛡️ **Memory safe** - Prevents memory leaks with periodic cleanup
 
-### Per-Service Navigation Tracking (Both Chrome and Firefox)
+### Account Switching Improvements
 
-Both versions now implement per-service navigation tracking to ensure that subsequent navigation interference only applies to the same Google service:
+The extension now includes sophisticated logic to prevent interference with user-initiated account switching:
 
-**Firefox Implementation:**
-- Simpler tracking without first-time detection
-- Per-service authuser respect after first redirect
-- Automatic cleanup of service tracking
-- Consistent behavior with Chrome for service isolation
+**Key Features:**
+- ✅ **Account Switcher Detection**: Recognizes Google account switcher URLs and skips redirects
+- ✅ **Cooldown Period**: 5-second cooldown prevents immediate re-redirecting after user changes
+- ✅ **Smart Account Detection**: Compares current authuser with expected extension defaults
+- ✅ **User Choice Respect**: Updates tracking when users manually change accounts
 
-**Service Examples:**
-- `mail.google.com` (Gmail)
-- `drive.google.com` (Google Drive)  
-- `calendar.google.com` (Google Calendar)
-- `docs.google.com` (Google Docs)
-- `google.com/maps` (Google Maps)
-
-**Behavior:**
+**How it works:**
 ```javascript
-// User visits Gmail → Gets redirected to default account
-// User manually changes to authuser=2 in Gmail
-// User navigates to Google Drive → Gets redirected to default account (different service)
-// User returns to Gmail → Stays on authuser=2 (same service, respects previous choice)
+// User clicks account switcher → Extension detects switcher URL and skips redirect
+// User manually changes from authuser=0 to authuser=2 → Extension updates tracking
+// User navigates within same service → Extension respects authuser=2 choice
+// 5+ seconds later, user navigates to same service → Extension still respects choice
 ```
 
-This ensures users can have different accounts for different Google services while maintaining their choices within each service.
+**Protected URLs:**
+- `accounts.google.com` (Account management)
+- URLs containing `/accounts/`, `/signin`, `/logout`
+- Account chooser and service login pages
+
+**Behavior Examples:**
+1. **Opening Gmail** → Extension applies default account (authuser=0)
+2. **User clicks account switcher** → Extension doesn't interfere
+3. **User selects different account** → Extension updates tracking for Gmail
+4. **User navigates within Gmail** → Extension respects user's choice
+5. **User opens Google Drive** → Extension applies default account (new service)
+6. **User returns to Gmail** → Extension respects previous Gmail choice
+
+This prevents the issue where changing accounts would create new tabs that get automatically redirected.
 
 ## 🔧 Technical Details
 

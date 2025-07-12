@@ -291,18 +291,67 @@ setInterval(() => {
 function shouldSkipRedirect(tabId, url, isFirstNavigation) {
   const baseService = getBaseServiceUrl(url);
   const tabData = processedTabs.get(tabId);
-  const isFirstTimeForService = isFirstNavigation || !tabData?.has(baseService);
+  const serviceData = tabData?.get(baseService);
+  const isFirstTimeForService = isFirstNavigation || !serviceData;
   const hasAuthUser = url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url);
   
   if (!hasAuthUser) return false;
   
+  // If this is not the first time for this service
   if (!isFirstTimeForService) {
+    // Check if enough time has passed since last redirect (cooldown period)
+    const now = Date.now();
+    const timeSinceLastRedirect = now - serviceData.timestamp;
+    const cooldownPeriod = 5000; // 5 seconds cooldown
+    
+    if (timeSinceLastRedirect < cooldownPeriod) {
+      console.log("[DNR] Cooldown period active for service", baseService, ", skipping redirect");
+      return true;
+    }
+    
+    // Check if user manually changed to a different account
+    const currentAuthUser = extractAuthUserFromUrl(url);
+    const previousAuthUser = extractAuthUserFromUrl(serviceData.url);
+    
+    if (currentAuthUser !== null && currentAuthUser !== previousAuthUser) {
+      console.log("[DNR] User manually changed account for service", baseService, "from", previousAuthUser, "to", currentAuthUser, ", updating tracking");
+      // Update the service data with new user choice
+      serviceData.url = url;
+      serviceData.timestamp = now;
+      return true; // Skip redirect, respect user choice
+    }
+    
     console.log("[DNR] URL already has authuser and not first navigation for service", baseService, ", skipping redirect");
     return true;
   }
   
   console.log("[DNR] First navigation to service", baseService, "with authuser - will override with default account");
   return false;
+}
+
+// Helper function to extract authuser parameter from URL
+function extractAuthUserFromUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    
+    // Check for authuser parameter
+    const authUserParam = urlObj.searchParams.get('authuser');
+    if (authUserParam !== null) {
+      return parseInt(authUserParam, 10);
+    }
+    
+    // Check for /u/{number}/ pattern in path
+    const uPattern = /\/u\/(\d+)\//;
+    const match = uPattern.exec(urlObj.pathname);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+    
+    return null;
+  } catch (e) {
+    console.error('[DNR] Error extracting authuser from URL:', e);
+    return null;
+  }
 }
 
 // Helper function to handle Google service redirects
@@ -314,6 +363,23 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   const accountId = getAccountForService(url);
   const redirectUrl = convertToRedirectUrl(url, accountId);
   const baseService = getBaseServiceUrl(url);
+  const currentAuthUser = extractAuthUserFromUrl(url);
+  const expectedAuthUser = accountId;
+  
+  // Check if the URL already has the correct authuser that we would redirect to
+  if (currentAuthUser === expectedAuthUser) {
+    console.log("[DNR] URL already has correct authuser", expectedAuthUser, "for service", baseService, ", no redirect needed");
+    
+    // Mark service as processed
+    if (!processedTabs.has(tabId)) {
+      processedTabs.set(tabId, new Map());
+    }
+    processedTabs.get(tabId).set(baseService, {
+      url: url,
+      timestamp: Date.now()
+    });
+    return false;
+  }
   
   if (redirectUrl && redirectUrl !== url) {
     console.log("[DNR] Redirecting tab from:", url, " to: ", redirectUrl, " for service: ", baseService, ", is First Nav: ", isFirstNavigation || !processedTabs.get(tabId)?.has(baseService));
@@ -354,6 +420,12 @@ chrome.tabs.onCreated.addListener((tab) => {
   console.log("[DNR] Tab created with URL:", url, ", isGoogle: ", isGoogleServiceUrl(url));
   if (!url) return;
   
+  // Check if this is a Google account switcher URL (these should not be redirected)
+  if (isAccountSwitcherUrl(url)) {
+    console.log("[DNR] Account switcher URL detected, skipping redirect");
+    return;
+  }
+  
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
       if (openerTab && isAnyGoogleUrl(openerTab.url)) return;
@@ -369,9 +441,43 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process when URL is changing and the change is committed
   if (changeInfo.status === 'loading' && changeInfo.url) {
     console.log("[DNR] Tab updated with URL:", changeInfo.url);
+    
+    // Check if this is a Google account switcher URL
+    if (isAccountSwitcherUrl(changeInfo.url)) {
+      console.log("[DNR] Account switcher URL detected in tab update, skipping redirect");
+      return;
+    }
+    
     handleGoogleServiceRedirect(tabId, changeInfo.url, false); // Not first navigation
   }
 });
+
+// Helper function to detect account switcher URLs
+function isAccountSwitcherUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const pathname = urlObj.pathname.toLowerCase();
+    
+    // Common account switcher patterns
+    const switcherPatterns = [
+      'accounts.google.com',
+      '/accounts/',
+      '/accountchooser',
+      '/signin',
+      '/logout',
+      '/servicelogin',
+      '/listaccounts'
+    ];
+    
+    return switcherPatterns.some(pattern => 
+      hostname.includes(pattern) || pathname.includes(pattern)
+    );
+  } catch (e) {
+    console.error('[DNR] Error checking account switcher URL:', e);
+    return false;
+  }
+}
 
 // Clean up processed tabs when they are removed
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {

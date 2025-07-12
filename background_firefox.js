@@ -204,50 +204,130 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000); // Run every 10 minutes
 
+// Helper function to extract authuser parameter from URL (Firefox)
+function extractAuthUserFromUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    
+    // Check for authuser parameter
+    const authUserParam = urlObj.searchParams.get('authuser');
+    if (authUserParam !== null) {
+      return parseInt(authUserParam, 10);
+    }
+    
+    // Check for /u/{number}/ pattern in path
+    const uPattern = /\/u\/(\d+)\//;
+    const match = uPattern.exec(urlObj.pathname);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+    
+    return null;
+  } catch (e) {
+    console.error('[Firefox] Error extracting authuser from URL:', e);
+    return null;
+  }
+}
+
+// Helper function to detect account switcher URLs (Firefox)
+function isAccountSwitcherUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const pathname = urlObj.pathname.toLowerCase();
+    
+    // Common account switcher patterns
+    const switcherPatterns = [
+      'accounts.google.com',
+      '/accounts/',
+      '/accountchooser',
+      '/signin',
+      '/logout',
+      '/servicelogin',
+      '/listaccounts'
+    ];
+    
+    return switcherPatterns.some(pattern => 
+      hostname.includes(pattern) || pathname.includes(pattern)
+    );
+  } catch (e) {
+    console.error('[Firefox] Error checking account switcher URL:', e);
+    return false;
+  }
+}
+
 // Helper function to handle Google service redirects
 function handleGoogleServiceRedirect(tabId, url) {
-  if (!isGoogleServiceUrl(url)) return false;
-  
-  const baseService = getBaseServiceUrl(url);
-  const tabData = processedServices.get(tabId);
-  const hasBeenProcessedForService = tabData?.has(baseService);
-  
-  // Check if URL already has authuser parameter and we've processed this service before
-  if ((url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) && hasBeenProcessedForService) {
-    console.log("[Firefox] URL already has authuser and service", baseService, "processed before, skipping redirect");
+  if (!isGoogleServiceUrl(url) || isAccountSwitcherUrl(url)) {
     return false;
   }
   
+  const baseService = getBaseServiceUrl(url);
+  const currentAuthUser = extractAuthUserFromUrl(url);
   const accountId = getAccountForService(url);
-  const redirectUrl = convertToRedirectUrl(url, accountId);
   
+  // Check if URL already has the correct authuser
+  if (currentAuthUser === accountId) {
+    markServiceAsProcessed(tabId, baseService);
+    return false;
+  }
+  
+  if (shouldSkipFirefoxRedirect(tabId, baseService, currentAuthUser)) {
+    return false;
+  }
+  
+  const redirectUrl = convertToRedirectUrl(url, accountId);
   if (redirectUrl && redirectUrl !== url) {
     console.log("[Firefox] Redirecting to service", baseService, ":", redirectUrl);
-    
-    // Mark this service as processed for this tab
-    if (!processedServices.has(tabId)) {
-      processedServices.set(tabId, new Map());
-    }
-    processedServices.get(tabId).set(baseService, Date.now());
-    
+    markServiceAsProcessed(tabId, baseService);
     chrome.tabs.update(tabId, { url: redirectUrl });
     return true;
   }
   
-  // Mark service as processed even if no redirect needed
-  if (!hasBeenProcessedForService) {
-    if (!processedServices.has(tabId)) {
-      processedServices.set(tabId, new Map());
+  markServiceAsProcessed(tabId, baseService);
+  return false;
+}
+
+// Helper function to check if Firefox redirect should be skipped
+function shouldSkipFirefoxRedirect(tabId, baseService, currentAuthUser) {
+  const tabData = processedServices.get(tabId);
+  const hasBeenProcessedForService = tabData?.has(baseService);
+  
+  if (currentAuthUser !== null && hasBeenProcessedForService) {
+    const lastProcessedTime = tabData.get(baseService);
+    const timeSinceLastProcess = Date.now() - lastProcessedTime;
+    const cooldownPeriod = 5000; // 5 seconds cooldown
+    
+    if (timeSinceLastProcess < cooldownPeriod) {
+      console.log("[Firefox] Cooldown period active for service", baseService);
+      return true;
     }
+    
+    console.log("[Firefox] User changed account for service", baseService, ", updating tracking");
     processedServices.get(tabId).set(baseService, Date.now());
+    return true;
   }
   
   return false;
 }
 
+// Helper function to mark service as processed
+function markServiceAsProcessed(tabId, baseService) {
+  if (!processedServices.has(tabId)) {
+    processedServices.set(tabId, new Map());
+  }
+  processedServices.get(tabId).set(baseService, Date.now());
+}
+
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
   if (!url) return;
+  
+  // Check if this is a Google account switcher URL
+  if (isAccountSwitcherUrl(url)) {
+    console.log("[Firefox] Account switcher URL detected in new tab, skipping redirect");
+    return;
+  }
   
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
@@ -263,6 +343,12 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process when URL is changing and the change is committed
   if (changeInfo.status === 'loading' && changeInfo.url) {
+    // Check if this is a Google account switcher URL
+    if (isAccountSwitcherUrl(changeInfo.url)) {
+      console.log("[Firefox] Account switcher URL detected in tab update, skipping redirect");
+      return;
+    }
+    
     handleGoogleServiceRedirect(tabId, changeInfo.url);
   }
 });
