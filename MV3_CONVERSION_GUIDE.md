@@ -158,6 +158,80 @@ Both Chrome MV3 and Firefox versions now handle navigation in existing tabs, not
 - ✅ Maintains consistent behavior between browsers
 - ✅ Reduced code complexity with helper functions
 
+### First-Time Navigation Detection (Chrome Only)
+
+The Chrome MV3 version includes advanced logic to detect first-time navigation and override existing authuser parameters when appropriate:
+
+**Key Features:**
+- ✅ **Tracks processed services per tab** to distinguish first vs subsequent navigation to each Google service
+- ✅ **Per-service tracking** allows navigation between different Google services while respecting user choices within the same service
+- ✅ **Overrides existing authuser** on first navigation to each service to apply extension defaults
+- ✅ **Prevents infinite redirects** on subsequent navigation to the same service with existing authuser
+- ✅ **Automatic cleanup** of processed service tracking (30-minute expiry + tab removal)
+- ✅ **Memory efficient** with periodic cleanup every 10 minutes
+
+**How it works:**
+```javascript
+// First navigation to Gmail: Override existing authuser
+handleGoogleServiceRedirect(tab.id, "https://mail.google.com/?authuser=2", true);
+// Result: Redirects to default account
+
+// User manually switches to authuser=2 in Gmail
+// Subsequent navigation within Gmail: Respect existing authuser
+handleGoogleServiceRedirect(tab.id, "https://mail.google.com/mail/?authuser=2", false);
+// Result: No redirect, respects user choice
+
+// User navigates to Google Drive in same tab: Override existing authuser
+handleGoogleServiceRedirect(tab.id, "https://drive.google.com/?authuser=2", false);
+// Result: Redirects to default account (first time visiting Drive in this tab)
+```
+
+**Per-Service Logic:**
+- Each Google service (mail.google.com, drive.google.com, etc.) is tracked independently
+- Users can have different accounts for different services in the same tab
+- First visit to any service applies extension defaults
+- Subsequent visits to the same service respect user choices
+
+**Use Cases:**
+1. **User opens Gmail with ?authuser=2** → Extension redirects to default account
+2. **User manually switches to authuser=2 in Gmail** → Extension respects the change
+3. **User navigates to Google Drive in same tab** → Extension applies defaults for Drive (independent of Gmail choice)
+4. **User returns to Gmail in same tab** → Extension respects previous Gmail choice (authuser=2)
+5. **User opens new tab** → Extension applies defaults again for all services
+
+**Benefits:**
+- 🎯 **Smart per-service override** - Applies extension settings without being intrusive
+- 🔄 **Service-independent control** - Allows different accounts for different Google services
+- 🚀 **Performance** - Efficient per-service tracking with automatic cleanup
+- 🛡️ **Memory safe** - Prevents memory leaks with periodic cleanup
+
+### Per-Service Navigation Tracking (Both Chrome and Firefox)
+
+Both versions now implement per-service navigation tracking to ensure that subsequent navigation interference only applies to the same Google service:
+
+**Firefox Implementation:**
+- Simpler tracking without first-time detection
+- Per-service authuser respect after first redirect
+- Automatic cleanup of service tracking
+- Consistent behavior with Chrome for service isolation
+
+**Service Examples:**
+- `mail.google.com` (Gmail)
+- `drive.google.com` (Google Drive)  
+- `calendar.google.com` (Google Calendar)
+- `docs.google.com` (Google Docs)
+- `google.com/maps` (Google Maps)
+
+**Behavior:**
+```javascript
+// User visits Gmail → Gets redirected to default account
+// User manually changes to authuser=2 in Gmail
+// User navigates to Google Drive → Gets redirected to default account (different service)
+// User returns to Gmail → Stays on authuser=2 (same service, respects previous choice)
+```
+
+This ensures users can have different accounts for different Google services while maintaining their choices within each service.
+
 ## 🔧 Technical Details
 
 ### Service Worker Limitations (MV3)

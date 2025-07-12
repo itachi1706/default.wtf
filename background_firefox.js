@@ -150,12 +150,71 @@ chrome.webRequest.onBeforeRequest.addListener(
   ["blocking"]
 );
 
+// Helper function to extract base service URL from Google URLs
+function getBaseServiceUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    
+    // For standard Google service subdomains (e.g., mail.google.com, drive.google.com)
+    if (hostname.includes('.google.co')) {
+      const servicePart = hostname.split('.google.co')[0];
+      return servicePart + '.google.com'; // Normalize to .com for consistency
+    }
+    
+    // For Google.com paths (e.g., google.com/maps, google.com/finance)
+    if (hostname.includes('google.co')) {
+      const pathParts = urlObj.pathname.split('/');
+      if (pathParts.length > 1 && pathParts[1]) {
+        return hostname + '/' + pathParts[1];
+      }
+      return hostname;
+    }
+    
+    return hostname;
+  } catch (e) {
+    console.error('[Firefox] Error extracting base service URL:', e);
+    return url;
+  }
+}
+
+// Track processed services per tab for Firefox (simpler than Chrome version)
+const processedServices = new Map();
+
+// Clean up old processed services periodically
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 30 * 60 * 1000; // 30 minutes
+  
+  for (const [tabId, tabData] of processedServices.entries()) {
+    const servicesToRemove = [];
+    
+    for (const [service, timestamp] of tabData.entries()) {
+      if (now - timestamp > maxAge) {
+        servicesToRemove.push(service);
+      }
+    }
+    
+    servicesToRemove.forEach(service => tabData.delete(service));
+    
+    // Remove tab entry if no services remain
+    if (tabData.size === 0) {
+      processedServices.delete(tabId);
+    }
+  }
+}, 10 * 60 * 1000); // Run every 10 minutes
+
 // Helper function to handle Google service redirects
 function handleGoogleServiceRedirect(tabId, url) {
   if (!isGoogleServiceUrl(url)) return false;
   
-  // Check if URL already has authuser parameter to avoid infinite redirects
-  if (url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) {
+  const baseService = getBaseServiceUrl(url);
+  const tabData = processedServices.get(tabId);
+  const hasBeenProcessedForService = tabData?.has(baseService);
+  
+  // Check if URL already has authuser parameter and we've processed this service before
+  if ((url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) && hasBeenProcessedForService) {
+    console.log("[Firefox] URL already has authuser and service", baseService, "processed before, skipping redirect");
     return false;
   }
   
@@ -163,8 +222,24 @@ function handleGoogleServiceRedirect(tabId, url) {
   const redirectUrl = convertToRedirectUrl(url, accountId);
   
   if (redirectUrl && redirectUrl !== url) {
+    console.log("[Firefox] Redirecting to service", baseService, ":", redirectUrl);
+    
+    // Mark this service as processed for this tab
+    if (!processedServices.has(tabId)) {
+      processedServices.set(tabId, new Map());
+    }
+    processedServices.get(tabId).set(baseService, Date.now());
+    
     chrome.tabs.update(tabId, { url: redirectUrl });
     return true;
+  }
+  
+  // Mark service as processed even if no redirect needed
+  if (!hasBeenProcessedForService) {
+    if (!processedServices.has(tabId)) {
+      processedServices.set(tabId, new Map());
+    }
+    processedServices.get(tabId).set(baseService, Date.now());
   }
   
   return false;
@@ -189,6 +264,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process when URL is changing and the change is committed
   if (changeInfo.status === 'loading' && changeInfo.url) {
     handleGoogleServiceRedirect(tabId, changeInfo.url);
+  }
+});
+
+// Clean up processed services when tabs are removed
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  const removedData = processedServices.get(tabId);
+  processedServices.delete(tabId);
+  if (removedData) {
+    console.log("[Firefox] Cleaned up processed tab:", tabId, "with services:", Array.from(removedData.keys()));
   }
 });
 

@@ -230,24 +230,133 @@ function detectRedirectCycle(redirectUrl) {
 
 // Legacy webRequest code removed - replaced with declarativeNetRequest above
 
+// Helper function to extract base service URL from Google URLs
+function getBaseServiceUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    
+    // For standard Google service subdomains (e.g., mail.google.com, drive.google.com)
+    if (hostname.includes('.google.co')) {
+      const servicePart = hostname.split('.google.co')[0];
+      return servicePart + '.google.com'; // Normalize to .com for consistency
+    }
+    
+    // For Google.com paths (e.g., google.com/maps, google.com/finance)
+    if (hostname.includes('google.co')) {
+      const pathParts = urlObj.pathname.split('/');
+      if (pathParts.length > 1 && pathParts[1]) {
+        return hostname + '/' + pathParts[1];
+      }
+      return hostname;
+    }
+    
+    return hostname;
+  } catch (e) {
+    console.error('[DNR] Error extracting base service URL:', e);
+    return url;
+  }
+}
+
+// Track tabs and their processed services to detect first-time navigation per service (Chrome only)
+const processedTabs = new Map();
+
+// Clean up old processed tabs periodically (Chrome only)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 30 * 60 * 1000; // 30 minutes
+  
+  for (const [tabId, tabData] of processedTabs.entries()) {
+    const servicesToRemove = [];
+    
+    for (const [service, data] of tabData.entries()) {
+      if (now - data.timestamp > maxAge) {
+        servicesToRemove.push(service);
+      }
+    }
+    
+    servicesToRemove.forEach(service => tabData.delete(service));
+    
+    // Remove tab entry if no services remain
+    if (tabData.size === 0) {
+      processedTabs.delete(tabId);
+      if (chrome.declarativeNetRequestFeedback) {
+        console.log("[DNR] Cleaned up old processed tab:", tabId);
+      }
+    } else if (servicesToRemove.length > 0 && chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Cleaned up old processed services for tab", tabId, ":", servicesToRemove);
+    }
+  }
+}, 10 * 60 * 1000); // Run every 10 minutes
+
+// Helper function to check if redirect should be skipped
+function shouldSkipRedirect(tabId, url, isFirstNavigation) {
+  const baseService = getBaseServiceUrl(url);
+  const tabData = processedTabs.get(tabId);
+  const isFirstTimeForService = isFirstNavigation || !tabData?.has(baseService);
+  const hasAuthUser = url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url);
+  
+  if (!hasAuthUser) return false;
+  
+  if (!isFirstTimeForService) {
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] URL already has authuser and not first navigation for service", baseService, ", skipping redirect");
+    }
+    return true;
+  }
+  
+  if (chrome.declarativeNetRequestFeedback) {
+    console.log("[DNR] First navigation to service", baseService, "with authuser - will override with default account");
+  }
+  return false;
+}
+
 // Helper function to handle Google service redirects
-function handleGoogleServiceRedirect(tabId, url) {
+function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   if (!isGoogleServiceUrl(url)) return false;
   
-  // Check if URL already has authuser parameter to avoid infinite redirects
-  if (url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) {
-    console.log("[DNR] URL already has authuser, skipping redirect");
-    return false;
-  }
+  if (shouldSkipRedirect(tabId, url, isFirstNavigation)) return false;
   
   const accountId = getAccountForService(url);
   const redirectUrl = convertToRedirectUrl(url, accountId);
+  const baseService = getBaseServiceUrl(url);
   
   if (redirectUrl && redirectUrl !== url) {
-    console.log("[DNR] Redirecting tab from:", url);
-    console.log("[DNR] Redirecting tab to:", redirectUrl);
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Redirecting tab from:", url);
+      console.log("[DNR] Redirecting tab to:", redirectUrl);
+      console.log("[DNR] Service:", baseService);
+      console.log("[DNR] Is first navigation to service:", isFirstNavigation || !processedTabs.get(tabId)?.has(baseService));
+    }
+    
+    // Mark this service as processed for this tab
+    if (!processedTabs.has(tabId)) {
+      processedTabs.set(tabId, new Map());
+    }
+    processedTabs.get(tabId).set(baseService, {
+      url: redirectUrl,
+      timestamp: Date.now()
+    });
+    
     chrome.tabs.update(tabId, { url: redirectUrl });
     return true;
+  }
+  
+  // Mark service as processed even if no redirect needed
+  const tabData = processedTabs.get(tabId);
+  const isFirstTimeForService = isFirstNavigation || !tabData?.has(baseService);
+  if (isFirstTimeForService) {
+    if (!processedTabs.has(tabId)) {
+      processedTabs.set(tabId, new Map());
+    }
+    processedTabs.get(tabId).set(baseService, {
+      url: url,
+      timestamp: Date.now()
+    });
+    
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Marked service", baseService, "as processed for tab", tabId);
+    }
   }
   
   return false;
@@ -255,17 +364,19 @@ function handleGoogleServiceRedirect(tabId, url) {
 
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
-  console.log("[DNR] Tab created with URL:", url);
-  console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
+  if (chrome.declarativeNetRequestFeedback) {
+    console.log("[DNR] Tab created with URL:", url);
+    console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
+  }
   if (!url) return;
   
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
       if (openerTab && isAnyGoogleUrl(openerTab.url)) return;
-      handleGoogleServiceRedirect(tab.id, url);
+      handleGoogleServiceRedirect(tab.id, url, true); // Mark as first navigation
     });
   } else {
-    handleGoogleServiceRedirect(tab.id, url);
+    handleGoogleServiceRedirect(tab.id, url, true); // Mark as first navigation
   }
 });
 
@@ -273,8 +384,19 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process when URL is changing and the change is committed
   if (changeInfo.status === 'loading' && changeInfo.url) {
-    console.log("[DNR] Tab updated with URL:", changeInfo.url);
-    handleGoogleServiceRedirect(tabId, changeInfo.url);
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Tab updated with URL:", changeInfo.url);
+    }
+    handleGoogleServiceRedirect(tabId, changeInfo.url, false); // Not first navigation
+  }
+});
+
+// Clean up processed tabs when they are removed
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  const removedData = processedTabs.get(tabId);
+  processedTabs.delete(tabId);
+  if (chrome.declarativeNetRequestFeedback && removedData) {
+    console.log("[DNR] Cleaned up processed tab:", tabId, "with services:", Array.from(removedData.keys()));
   }
 });
 
