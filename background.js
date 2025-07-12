@@ -102,15 +102,15 @@ async function initializeDeclarativeNetRequestRules() {
   // Clear existing rules
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const ruleIdsToRemove = existingRules.map(rule => rule.id);
-  console.log("Existing rules found:", existingRules);
-  console.log("Removing existing rules:", ruleIdsToRemove);
-  
+  if (chrome.declarativeNetRequestFeedback) {
+    console.log("[DNR] Existing rules found:", existingRules);
+    console.log("[DNR] Removing existing rules:", ruleIdsToRemove);
+  }
   if (ruleIdsToRemove.length > 0) {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: ruleIdsToRemove
     });
   }
-  
   await updateDeclarativeNetRequestRules();
 }
 
@@ -118,11 +118,13 @@ async function updateDeclarativeNetRequestRules() {
   // Clear existing rules first
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const ruleIdsToRemove = existingRules.map(rule => rule.id);
-  
+  if (chrome.declarativeNetRequestFeedback) {
+    console.log("[DNR] Existing rules before update:", existingRules);
+    console.log("[DNR] Rule IDs to remove:", ruleIdsToRemove);
+  }
   // Create new rules based on current state
   const newRules = [];
   let ruleId = 1;
-  
   // Create rules for Google services that don't have authuser parameter
   const googleServicePatterns = [
     "*://*.mail.google.com/*",
@@ -202,13 +204,14 @@ async function updateDeclarativeNetRequestRules() {
       }
     });
   }
-  
   // Update rules
   await chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: ruleIdsToRemove,
     addRules: newRules
   });
-  console.log("Updated declarativeNetRequest rules:", newRules);
+  if (chrome.declarativeNetRequestFeedback) {
+    console.log("[DNR] Updated declarativeNetRequest rules:", newRules);
+  }
 }
 
 // collect last 4 redirectUrls - keeping for compatibility but not used in MV3
@@ -286,4 +289,14 @@ function getAccountForService(url) {
     }
   }
   return defaultAccount;
+}
+
+
+// Declarative check
+
+// Listen for matched DNR rules if feedback permission is present
+if (chrome.declarativeNetRequestFeedback && chrome.declarativeNetRequest.onRuleMatchedDebug) {
+  chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((info) => {
+    console.log('[DNR] Rule matched:', info);
+  });
 }
