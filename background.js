@@ -170,6 +170,7 @@ async function updateDeclarativeNetRequestRules() {
     "*://*.books.google.com/*",
     "*://*.sites.google.com/*",
     "*://*.groups.google.com/*",
+    "*://*.gemini.google.com/*",
     "*://www.google.com/maps*",
     "*://www.google.com/finance*",
     "*://www.google.com/travel*",
@@ -231,6 +232,7 @@ function detectRedirectCycle(redirectUrl) {
 
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
+  console.log("Tab created with URL:", url);
   if (!url || !isGoogleServiceUrl(url)) return;
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
