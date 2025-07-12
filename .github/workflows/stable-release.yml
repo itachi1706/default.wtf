@@ -1,0 +1,254 @@
+name: Create Stable Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'release-*'
+
+env:
+  CHROME_PACKAGE_NAME: "chrome_mv3_extension"
+  FIREFOX_PACKAGE_NAME: "firefox_extension"
+
+jobs:
+  create-stable-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq zip unzip
+        
+    - name: Extract version from tag
+      run: |
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        VERSION=${TAG_NAME#v}
+        VERSION=${VERSION#release-}
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Release version: $VERSION"
+        
+    - name: Update version in manifests
+      run: |
+        echo "Updating version to ${{ env.VERSION }} in manifest files..."
+        
+        # Update Chrome manifest
+        jq --arg version "${{ env.VERSION }}" '.version = $version' manifest.json > manifest_temp.json
+        mv manifest_temp.json manifest.json
+        
+        # Update Firefox manifest
+        jq --arg version "${{ env.VERSION }}" '.version = $version' manifest_firefox.json > manifest_temp.json
+        mv manifest_temp.json manifest_firefox.json
+        
+        echo "✅ Version updated in both manifests"
+        
+    - name: Run full test suite
+      run: |
+        echo "Running comprehensive tests for stable release..."
+        
+        # Validate manifests
+        jq empty manifest.json || exit 1
+        jq empty manifest_firefox.json || exit 1
+        
+        # Check JavaScript syntax
+        node -c background.js || exit 1
+        node -c background_firefox.js || exit 1
+        node -c utils.js || exit 1
+        node -c accounts.js || exit 1
+        node -c rules.js || exit 1
+        
+        # Verify required files
+        required_files=("background.js" "background_firefox.js" "utils.js" "popup.html" "styles.css" "accounts.js" "rules.js")
+        for file in "${required_files[@]}"; do
+          [ -f "$file" ] || { echo "Missing: $file"; exit 1; }
+        done
+        
+        # Verify images
+        required_images=("images/16.png" "images/32.png" "images/48.png" "images/128.png")
+        for img in "${required_images[@]}"; do
+          [ -f "$img" ] || { echo "Missing: $img"; exit 1; }
+        done
+        
+        echo "✅ All tests passed for stable release"
+        
+    - name: Build Chrome Extension
+      run: |
+        echo "Building Chrome MV3 extension for stable release..."
+        
+        mkdir -p dist/chrome
+        
+        # Copy all required files
+        cp manifest.json dist/chrome/
+        cp background.js dist/chrome/
+        cp utils.js dist/chrome/
+        cp popup.html dist/chrome/
+        cp styles.css dist/chrome/
+        cp accounts.js dist/chrome/
+        cp rules.js dist/chrome/
+        cp -r images dist/chrome/
+        cp LICENSE dist/chrome/
+        cp README.md dist/chrome/
+        cp MV3_CONVERSION_GUIDE.md dist/chrome/
+        
+        # Create release package
+        cd dist/chrome
+        zip -r "../../${CHROME_PACKAGE_NAME}-v${{ env.VERSION }}.zip" ./*
+        cd ../..
+        
+        echo "✅ Chrome extension built successfully"
+        
+    - name: Build Firefox Extension
+      run: |
+        echo "Building Firefox extension for stable release..."
+        
+        mkdir -p dist/firefox
+        
+        # Copy files with Firefox-specific versions
+        cp manifest_firefox.json dist/firefox/manifest.json
+        cp background_firefox.js dist/firefox/background.js
+        cp utils.js dist/firefox/
+        cp popup.html dist/firefox/
+        cp styles.css dist/firefox/
+        cp accounts.js dist/firefox/
+        cp rules.js dist/firefox/
+        cp -r images dist/firefox/
+        cp LICENSE dist/firefox/
+        cp README.md dist/firefox/
+        cp MV3_CONVERSION_GUIDE.md dist/firefox/
+        
+        # Create release package
+        cd dist/firefox
+        zip -r "../../${FIREFOX_PACKAGE_NAME}-v${{ env.VERSION }}.zip" ./*
+        cd ../..
+        
+        echo "✅ Firefox extension built successfully"
+        
+    - name: Generate changelog
+      run: |
+        echo "Generating changelog for v${{ env.VERSION }}..."
+        
+        cat > CHANGELOG.md << EOF
+        # Release v${{ env.VERSION }}
+        
+        **Release Date:** $(date -u "+%Y-%m-%d")
+        **Tag:** ${{ env.TAG_NAME }}
+        **Commit:** ${{ github.sha }}
+        
+        ## 📋 What's New
+        
+        EOF
+        
+        # Get commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$LAST_TAG" ]; then
+          echo "### Changes since $LAST_TAG:" >> CHANGELOG.md
+          git log --oneline --no-merges $LAST_TAG..HEAD >> CHANGELOG.md
+        else
+          echo "### All commits in this release:" >> CHANGELOG.md
+          git log --oneline --no-merges >> CHANGELOG.md
+        fi
+        
+        cat >> CHANGELOG.md << EOF
+        
+        ## 📦 Downloads
+        
+        ### Chrome Extension (Manifest V3)
+        - **File:** \`${CHROME_PACKAGE_NAME}-v${{ env.VERSION }}.zip\`
+        - **Compatible with:** Chrome 88+, Edge 88+, Opera 74+
+        - **Features:** Service Worker, Declarative Net Request, MV3 Security
+        
+        ### Firefox Extension
+        - **File:** \`${FIREFOX_PACKAGE_NAME}-v${{ env.VERSION }}.zip\`
+        - **Compatible with:** Firefox 42+
+        - **Features:** WebRequest Blocking, Background Scripts
+        
+        ## 🛠️ Installation
+        
+        ### Chrome/Edge/Opera
+        1. Download the Chrome package
+        2. Extract to a folder
+        3. Open browser extensions page
+        4. Enable Developer mode
+        5. Load unpacked extension
+        
+        ### Firefox
+        1. Download the Firefox package
+        2. Open \`about:debugging\`
+        3. Click "Load Temporary Add-on"
+        4. Select the downloaded ZIP file
+        
+        ## 🔧 Technical Details
+        
+        - **Manifest Version:** 3 (Chrome), 2/3 Hybrid (Firefox)
+        - **Permissions:** Tabs, Storage, DeclarativeNetRequest/WebRequest
+        - **Security:** CSP compliant, no inline scripts
+        - **Performance:** Optimized for service workers
+        
+        ## 🆘 Support
+        
+        - **Issues:** [GitHub Issues](https://github.com/${{ github.repository }}/issues)
+        - **Documentation:** [MV3 Conversion Guide](MV3_CONVERSION_GUIDE.md)
+        - **Website:** [default.wtf](https://default.wtf/)
+        
+        EOF
+        
+    - name: Create Stable Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: "Release v${{ env.VERSION }}"
+        body_path: CHANGELOG.md
+        draft: false
+        prerelease: false
+        files: |
+          ${{ env.CHROME_PACKAGE_NAME }}-v${{ env.VERSION }}.zip
+          ${{ env.FIREFOX_PACKAGE_NAME }}-v${{ env.VERSION }}.zip
+          MV3_CONVERSION_GUIDE.md
+          CHANGELOG.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: stable-release-v${{ env.VERSION }}
+        path: |
+          ${{ env.CHROME_PACKAGE_NAME }}-v${{ env.VERSION }}.zip
+          ${{ env.FIREFOX_PACKAGE_NAME }}-v${{ env.VERSION }}.zip
+          CHANGELOG.md
+          dist/
+        retention-days: 90
+        
+    - name: Commit version updates
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add manifest.json manifest_firefox.json
+        git commit -m "Bump version to ${{ env.VERSION }}" || exit 0
+        git push origin HEAD:${{ github.ref_name }} || echo "Could not push version bump"
+        
+    - name: Release summary
+      run: |
+        echo "## 🚀 Stable Release v${{ env.VERSION }} Created!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Release Packages:" >> $GITHUB_STEP_SUMMARY
+        echo "- 🟢 **Chrome MV3**: \`${CHROME_PACKAGE_NAME}-v${{ env.VERSION }}.zip\`" >> $GITHUB_STEP_SUMMARY
+        echo "- 🟠 **Firefox**: \`${FIREFOX_PACKAGE_NAME}-v${{ env.VERSION }}.zip\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Package Information:" >> $GITHUB_STEP_SUMMARY
+        echo "- Chrome Size: $(ls -lh ${CHROME_PACKAGE_NAME}-v${{ env.VERSION }}.zip | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+        echo "- Firefox Size: $(ls -lh ${FIREFOX_PACKAGE_NAME}-v${{ env.VERSION }}.zip | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Quick Links:" >> $GITHUB_STEP_SUMMARY
+        echo "- [📥 Download Release](https://github.com/${{ github.repository }}/releases/tag/${{ env.TAG_NAME }})" >> $GITHUB_STEP_SUMMARY
+        echo "- [📚 Documentation](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/MV3_CONVERSION_GUIDE.md)" >> $GITHUB_STEP_SUMMARY
+        echo "- [🐛 Report Issues](https://github.com/${{ github.repository }}/issues)" >> $GITHUB_STEP_SUMMARY

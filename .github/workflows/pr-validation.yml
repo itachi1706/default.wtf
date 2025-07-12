@@ -1,0 +1,193 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ main, dev, mv3 ]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+        
+    - name: Validate JSON files
+      run: |
+        echo "🔍 Validating JSON files..."
+        
+        files_to_check=("manifest.json" "manifest_firefox.json")
+        
+        for file in "${files_to_check[@]}"; do
+          if [ -f "$file" ]; then
+            if jq empty "$file" 2>/dev/null; then
+              echo "✅ $file is valid JSON"
+            else
+              echo "❌ $file is not valid JSON"
+              exit 1
+            fi
+          else
+            echo "⚠️ $file not found"
+          fi
+        done
+        
+    - name: Check JavaScript syntax
+      run: |
+        echo "🔍 Checking JavaScript syntax..."
+        
+        js_files=("background.js" "background_firefox.js" "utils.js" "accounts.js" "rules.js")
+        
+        for file in "${js_files[@]}"; do
+          if [ -f "$file" ]; then
+            if node -c "$file"; then
+              echo "✅ $file syntax is valid"
+            else
+              echo "❌ $file has syntax errors"
+              exit 1
+            fi
+          else
+            echo "⚠️ $file not found"
+          fi
+        done
+        
+    - name: Check for MV3 compliance issues
+      run: |
+        echo "🔍 Checking MV3 compliance..."
+        
+        # Check for eval() usage
+        if grep -r "eval(" . --include="*.js" --exclude-dir=.git; then
+          echo "❌ Found eval() usage - not allowed in MV3"
+          exit 1
+        fi
+        
+        # Check for inline event handlers in HTML
+        if grep -E "(onclick|onload|onchange)=" popup.html 2>/dev/null; then
+          echo "⚠️ Found inline event handlers - consider using addEventListener"
+        fi
+        
+        # Check for unsafe innerHTML usage
+        if grep -r "innerHTML.*=" . --include="*.js" --exclude-dir=.git; then
+          echo "⚠️ Found innerHTML usage - review for XSS risks"
+        fi
+        
+        echo "✅ MV3 compliance check completed"
+        
+    - name: Validate version consistency
+      run: |
+        echo "🔍 Checking version consistency..."
+        
+        if [ -f "manifest.json" ] && [ -f "manifest_firefox.json" ]; then
+          chrome_version=$(jq -r '.version' manifest.json)
+          firefox_version=$(jq -r '.version' manifest_firefox.json)
+          
+          if [ "$chrome_version" = "$firefox_version" ]; then
+            echo "✅ Version consistency check passed: $chrome_version"
+          else
+            echo "❌ Version mismatch: Chrome($chrome_version) vs Firefox($firefox_version)"
+            exit 1
+          fi
+        fi
+        
+    - name: Check for required files
+      run: |
+        echo "🔍 Checking for required files..."
+        
+        required_files=(
+          "manifest.json"
+          "manifest_firefox.json" 
+          "background.js"
+          "background_firefox.js"
+          "utils.js"
+          "popup.html"
+          "styles.css"
+          "accounts.js"
+          "rules.js"
+          "LICENSE"
+          "README.md"
+        )
+        
+        missing_files=()
+        
+        for file in "${required_files[@]}"; do
+          if [ ! -f "$file" ]; then
+            missing_files+=("$file")
+          else
+            echo "✅ $file exists"
+          fi
+        done
+        
+        if [ ${#missing_files[@]} -gt 0 ]; then
+          echo "❌ Missing required files:"
+          printf '%s\n' "${missing_files[@]}"
+          exit 1
+        fi
+        
+        # Check images
+        required_images=("images/16.png" "images/32.png" "images/48.png" "images/128.png")
+        missing_images=()
+        
+        for img in "${required_images[@]}"; do
+          if [ ! -f "$img" ]; then
+            missing_images+=("$img")
+          else
+            echo "✅ $img exists"
+          fi
+        done
+        
+        if [ ${#missing_images[@]} -gt 0 ]; then
+          echo "❌ Missing required images:"
+          printf '%s\n' "${missing_images[@]}"
+          exit 1
+        fi
+        
+    - name: Analyze file changes
+      run: |
+        echo "🔍 Analyzing changed files..."
+        
+        # Get list of changed files
+        changed_files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+        
+        echo "Changed files in this PR:"
+        echo "$changed_files"
+        
+        # Check if critical files were modified
+        critical_files=("manifest.json" "manifest_firefox.json" "background.js" "background_firefox.js")
+        
+        for file in $changed_files; do
+          if [[ " ${critical_files[@]} " =~ " ${file} " ]]; then
+            echo "⚠️ Critical file modified: $file"
+            echo "Make sure to test thoroughly!"
+          fi
+        done
+        
+    - name: Generate PR validation summary
+      run: |
+        echo "## 🔍 PR Validation Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ✅ Checks Passed:" >> $GITHUB_STEP_SUMMARY
+        echo "- JSON validation" >> $GITHUB_STEP_SUMMARY
+        echo "- JavaScript syntax check" >> $GITHUB_STEP_SUMMARY
+        echo "- MV3 compliance check" >> $GITHUB_STEP_SUMMARY
+        echo "- Version consistency" >> $GITHUB_STEP_SUMMARY
+        echo "- Required files verification" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY
+        echo "1. Review the changes carefully" >> $GITHUB_STEP_SUMMARY
+        echo "2. Test the extension manually in both Chrome and Firefox" >> $GITHUB_STEP_SUMMARY
+        echo "3. Verify account switching functionality" >> $GITHUB_STEP_SUMMARY
+        echo "4. Check Google service redirections" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **This PR is ready for review!**" >> $GITHUB_STEP_SUMMARY

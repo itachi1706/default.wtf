@@ -1,0 +1,328 @@
+name: Build and Release Extension
+
+on:
+  push:
+    branches: [ main, dev, mv3 ]
+  pull_request:
+    branches: [ main, dev ]
+
+env:
+  CHROME_PACKAGE_NAME: "chrome_mv3_extension"
+  FIREFOX_PACKAGE_NAME: "firefox_extension"
+  PRERELEASE_TAG: "latest-build"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq zip unzip
+        
+    - name: Validate manifest files
+      run: |
+        echo "Validating Chrome manifest..."
+        if ! jq empty manifest.json; then
+          echo "❌ manifest.json is not valid JSON"
+          exit 1
+        fi
+        echo "✅ manifest.json is valid"
+        
+        echo "Validating Firefox manifest..."
+        if ! jq empty manifest_firefox.json; then
+          echo "❌ manifest_firefox.json is not valid JSON"
+          exit 1
+        fi
+        echo "✅ manifest_firefox.json is valid"
+        
+    - name: Check required files
+      run: |
+        echo "Checking required files..."
+        required_files=("background.js" "background_firefox.js" "utils.js" "popup.html" "styles.css" "accounts.js" "rules.js")
+        
+        for file in "${required_files[@]}"; do
+          if [ ! -f "$file" ]; then
+            echo "❌ Required file missing: $file"
+            exit 1
+          fi
+          echo "✅ $file exists"
+        done
+        
+        # Check images
+        required_images=("images/16.png" "images/32.png" "images/48.png" "images/128.png" "images/logo.svg")
+        for img in "${required_images[@]}"; do
+          if [ ! -f "$img" ]; then
+            echo "❌ Required image missing: $img"
+            exit 1
+          fi
+          echo "✅ $img exists"
+        done
+        
+    - name: Validate JavaScript syntax
+      run: |
+        echo "Validating JavaScript files..."
+        
+        # Check background.js
+        if ! node -c background.js; then
+          echo "❌ background.js has syntax errors"
+          exit 1
+        fi
+        echo "✅ background.js syntax is valid"
+        
+        # Check background_firefox.js
+        if ! node -c background_firefox.js; then
+          echo "❌ background_firefox.js has syntax errors"
+          exit 1
+        fi
+        echo "✅ background_firefox.js syntax is valid"
+        
+        # Check utils.js
+        if ! node -c utils.js; then
+          echo "❌ utils.js has syntax errors"
+          exit 1
+        fi
+        echo "✅ utils.js syntax is valid"
+        
+        # Check other JS files
+        for js_file in accounts.js rules.js; do
+          if ! node -c "$js_file"; then
+            echo "❌ $js_file has syntax errors"
+            exit 1
+          fi
+          echo "✅ $js_file syntax is valid"
+        done
+        
+    - name: Validate HTML files
+      run: |
+        echo "Checking popup.html for inline scripts (MV3 compliance)..."
+        
+        # Check for inline scripts (not allowed in MV3)
+        if grep -q "javascript:" popup.html; then
+          echo "❌ Found inline JavaScript in popup.html"
+          exit 1
+        fi
+        
+        # Check for onclick attributes (should use addEventListener)
+        if grep -q "onclick=" popup.html; then
+          echo "⚠️ Warning: Found onclick attributes in popup.html (consider using addEventListener)"
+        fi
+        
+        echo "✅ popup.html validation passed"
+        
+    - name: Check manifest version consistency
+      run: |
+        chrome_version=$(jq -r '.version' manifest.json)
+        firefox_version=$(jq -r '.version' manifest_firefox.json)
+        
+        if [ "$chrome_version" != "$firefox_version" ]; then
+          echo "❌ Version mismatch: Chrome($chrome_version) vs Firefox($firefox_version)"
+          exit 1
+        fi
+        
+        echo "✅ Version consistency check passed: $chrome_version"
+        echo "EXTENSION_VERSION=$chrome_version" >> $GITHUB_ENV
+        
+    - name: Build Chrome MV3 Extension
+      run: |
+        echo "Building Chrome MV3 extension..."
+        
+        # Create build directory
+        mkdir -p build/chrome
+        
+        # Copy files for Chrome
+        cp manifest.json build/chrome/
+        cp background.js build/chrome/
+        cp utils.js build/chrome/
+        cp popup.html build/chrome/
+        cp styles.css build/chrome/
+        cp accounts.js build/chrome/
+        cp rules.js build/chrome/
+        cp -r images build/chrome/
+        cp LICENSE build/chrome/
+        cp README.md build/chrome/
+        
+        # Create zip package
+        cd build/chrome
+        zip -r "../../${CHROME_PACKAGE_NAME}.zip" ./*
+        cd ../..
+        
+        echo "✅ Chrome extension package created"
+        
+    - name: Build Firefox Extension
+      run: |
+        echo "Building Firefox extension..."
+        
+        # Create build directory
+        mkdir -p build/firefox
+        
+        # Copy files for Firefox (use Firefox-specific manifest and background)
+        cp manifest_firefox.json build/firefox/manifest.json
+        cp background_firefox.js build/firefox/background.js
+        cp utils.js build/firefox/
+        cp popup.html build/firefox/
+        cp styles.css build/firefox/
+        cp accounts.js build/firefox/
+        cp rules.js build/firefox/
+        cp -r images build/firefox/
+        cp LICENSE build/firefox/
+        cp README.md build/firefox/
+        
+        # Create zip package
+        cd build/firefox
+        zip -r "../../${FIREFOX_PACKAGE_NAME}.zip" ./*
+        cd ../..
+        
+        echo "✅ Firefox extension package created"
+        
+    - name: Generate release notes
+      run: |
+        cat > release_notes.md << EOF
+        # Extension Build - v${{ env.EXTENSION_VERSION }}
+        
+        **Build Date:** $(date -u "+%Y-%m-%d %H:%M:%S UTC")
+        **Commit:** ${{ github.sha }}
+        **Branch:** ${{ github.ref_name }}
+        
+        ## 📦 Packages
+        
+        ### Chrome Extension (Manifest V3)
+        - **File:** \`${CHROME_PACKAGE_NAME}.zip\`
+        - **Manifest Version:** 3
+        - **Service Worker:** Yes
+        - **Declarative Net Request:** Yes
+        - **Minimum Chrome Version:** 88
+        
+        ### Firefox Extension (Manifest V2/V3 Hybrid)
+        - **File:** \`${FIREFOX_PACKAGE_NAME}.zip\`
+        - **Manifest Version:** 2 (with MV3 compatibility)
+        - **WebRequest Blocking:** Yes
+        - **Background Scripts:** Yes
+        
+        ## 🧪 Testing Status
+        
+        ✅ Manifest validation
+        ✅ JavaScript syntax check
+        ✅ Required files verification
+        ✅ HTML compliance check
+        ✅ Version consistency
+        
+        ## 🚀 Installation Instructions
+        
+        ### Chrome
+        1. Download \`${CHROME_PACKAGE_NAME}.zip\`
+        2. Extract the contents
+        3. Open Chrome and go to \`chrome://extensions/\`
+        4. Enable "Developer mode"
+        5. Click "Load unpacked" and select the extracted folder
+        
+        ### Firefox
+        1. Download \`${FIREFOX_PACKAGE_NAME}.zip\`
+        2. Open Firefox and go to \`about:debugging\`
+        3. Click "This Firefox"
+        4. Click "Load Temporary Add-on"
+        5. Select the \`${FIREFOX_PACKAGE_NAME}.zip\` file
+        
+        ## 📋 Changes in this Build
+        
+        EOF
+        
+        # Add recent commits
+        echo "### Recent Commits:" >> release_notes.md
+        git log --oneline -5 >> release_notes.md
+        
+        echo "" >> release_notes.md
+        echo "---" >> release_notes.md
+        echo "*This is an automated build. For stable releases, please check the main releases page.*" >> release_notes.md
+        
+    - name: Delete existing pre-release
+      uses: dev-drprasad/delete-tag-and-release@v1.0.1
+      with:
+        tag_name: ${{ env.PRERELEASE_TAG }}
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        delete_release: true
+      continue-on-error: true
+        
+    - name: Create Pre-release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.PRERELEASE_TAG }}
+        name: "Latest Build - v${{ env.EXTENSION_VERSION }}"
+        body_path: release_notes.md
+        prerelease: true
+        draft: false
+        files: |
+          ${{ env.CHROME_PACKAGE_NAME }}.zip
+          ${{ env.FIREFOX_PACKAGE_NAME }}.zip
+          MV3_CONVERSION_GUIDE.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: extension-packages-v${{ env.EXTENSION_VERSION }}
+        path: |
+          ${{ env.CHROME_PACKAGE_NAME }}.zip
+          ${{ env.FIREFOX_PACKAGE_NAME }}.zip
+          build/
+        retention-days: 30
+        
+    - name: Build summary
+      run: |
+        echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Packages Created:" >> $GITHUB_STEP_SUMMARY
+        echo "- 🟢 Chrome MV3: \`${CHROME_PACKAGE_NAME}.zip\`" >> $GITHUB_STEP_SUMMARY
+        echo "- 🟠 Firefox: \`${FIREFOX_PACKAGE_NAME}.zip\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Package Sizes:" >> $GITHUB_STEP_SUMMARY
+        echo "- Chrome: $(ls -lh ${CHROME_PACKAGE_NAME}.zip | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+        echo "- Firefox: $(ls -lh ${FIREFOX_PACKAGE_NAME}.zip | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Links:" >> $GITHUB_STEP_SUMMARY
+        echo "- [Download Latest Pre-release](https://github.com/${{ github.repository }}/releases/tag/${PRERELEASE_TAG})" >> $GITHUB_STEP_SUMMARY
+        echo "- [View All Releases](https://github.com/${{ github.repository }}/releases)" >> $GITHUB_STEP_SUMMARY
+
+  # Optional: Separate job for security scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    if: github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run security scan
+      run: |
+        echo "Running basic security checks..."
+        
+        # Check for potential security issues in JavaScript
+        echo "Checking for eval() usage..."
+        if grep -r "eval(" . --include="*.js" --exclude-dir=node_modules; then
+          echo "⚠️ Warning: Found eval() usage (not allowed in MV3)"
+        fi
+        
+        # Check for innerHTML usage (potential XSS)
+        echo "Checking for innerHTML usage..."
+        if grep -r "innerHTML" . --include="*.js" --exclude-dir=node_modules; then
+          echo "⚠️ Warning: Found innerHTML usage (review for XSS risks)"
+        fi
+        
+        # Check for external script loading
+        echo "Checking for external script references..."
+        if grep -r "https\?://" . --include="*.html" --include="*.js" | grep -v "google\.co"; then
+          echo "⚠️ Warning: Found external references (review CSP compliance)"
+        fi
+        
+        echo "✅ Security scan completed"
