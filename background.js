@@ -316,10 +316,7 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   const baseService = getBaseServiceUrl(url);
   
   if (redirectUrl && redirectUrl !== url) {
-    console.log("[DNR] Redirecting tab from:", url);
-    console.log("[DNR] Redirecting tab to:", redirectUrl);
-    console.log("[DNR] Service:", baseService);
-    console.log("[DNR] Is first navigation to service:", isFirstNavigation || !processedTabs.get(tabId)?.has(baseService));
+    console.log("[DNR] Redirecting tab from:", url, " to: ", redirectUrl, " for service: ", baseService, ", is First Nav: ", isFirstNavigation || !processedTabs.get(tabId)?.has(baseService));
     
     // Mark this service as processed for this tab
     if (!processedTabs.has(tabId)) {
@@ -354,8 +351,7 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
 
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
-  console.log("[DNR] Tab created with URL:", url);
-  console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
+  console.log("[DNR] Tab created with URL:", url, ", isGoogle: ", isGoogleServiceUrl(url));
   if (!url) return;
   
   if (tab.openerTabId) {
