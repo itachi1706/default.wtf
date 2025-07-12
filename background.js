@@ -261,6 +261,58 @@ function getBaseServiceUrl(url) {
 // Track tabs and their processed services to detect first-time navigation per service (Chrome only)
 const processedTabs = new Map();
 
+// Track recent user interactions that might indicate account switching
+const recentUserInteractions = new Map();
+
+// Track tabs that should temporarily skip redirects (for account switching)
+const temporarySkipRedirects = new Map();
+
+// Record user interaction (like clicking) that might lead to account switching
+function recordUserInteraction(tabId) {
+  recentUserInteractions.set(tabId, Date.now());
+  // Clean up old interactions after 10 seconds
+  setTimeout(() => {
+    recentUserInteractions.delete(tabId);
+  }, 10000);
+}
+
+// Temporarily skip redirects for a tab (useful for account switching)
+function temporarilySkipRedirects(tabId, duration = 15000) {
+  temporarySkipRedirects.set(tabId, Date.now() + duration);
+  console.log("[DNR] Temporarily skipping redirects for tab", tabId, "for", duration, "ms");
+}
+
+// Check if redirects should be temporarily skipped for a tab
+function shouldTemporarilySkipRedirects(tabId) {
+  const skipUntil = temporarySkipRedirects.get(tabId);
+  if (!skipUntil) return false;
+  
+  if (Date.now() > skipUntil) {
+    temporarySkipRedirects.delete(tabId);
+    return false;
+  }
+  
+  return true;
+}
+
+// Check if there was recent user interaction that might indicate account switching
+function hasRecentUserInteraction(tabId) {
+  const interactionTime = recentUserInteractions.get(tabId);
+  if (!interactionTime) return false;
+  
+  const timeSinceInteraction = Date.now() - interactionTime;
+  return timeSinceInteraction < 10000; // 10 seconds
+}
+
+// Listen for user interactions on Google pages
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (tab && isAnyGoogleUrl(tab.url)) {
+      recordUserInteraction(activeInfo.tabId);
+    }
+  });
+});
+
 // Clean up old processed tabs periodically (Chrome only)
 setInterval(() => {
   const now = Date.now();
@@ -358,6 +410,12 @@ function extractAuthUserFromUrl(url) {
 function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   if (!isGoogleServiceUrl(url)) return false;
   
+  // Check if redirects should be temporarily skipped for this tab
+  if (shouldTemporarilySkipRedirects(tabId)) {
+    console.log("[DNR] Temporarily skipping redirect for tab", tabId, "due to recent account switching activity");
+    return false;
+  }
+  
   if (shouldSkipRedirect(tabId, url, isFirstNavigation)) return false;
   
   const accountId = getAccountForService(url);
@@ -428,7 +486,28 @@ chrome.tabs.onCreated.addListener((tab) => {
   
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
-      if (openerTab && isAnyGoogleUrl(openerTab.url)) return;
+      if (chrome.runtime.lastError) {
+        // If we can't get opener tab info, proceed with normal handling
+        handleGoogleServiceRedirect(tab.id, url, true);
+        return;
+      }
+      
+      // If the opener is a Google service and we have a new tab, this might be account switching
+      if (openerTab && isGoogleServiceUrl(openerTab.url)) {
+        console.log("[DNR] New tab opened from Google service:", openerTab.url);
+        
+        // If the new URL is any Google URL (service or accounts), temporarily skip redirects
+        // This handles cases where account switching opens intermediate pages
+        if (isAnyGoogleUrl(url)) {
+          console.log("[DNR] Google-to-Google navigation detected, temporarily skipping redirects to allow account switching");
+          temporarilySkipRedirects(tab.id, 15000); // 15 seconds
+          
+          // Also temporarily skip redirects on the opener tab in case it gets redirected
+          temporarilySkipRedirects(tab.openerTabId, 15000);
+          return;
+        }
+      }
+      
       handleGoogleServiceRedirect(tab.id, url, true); // Mark as first navigation
     });
   } else {
@@ -479,10 +558,53 @@ function isAccountSwitcherUrl(url) {
   }
 }
 
+// Helper function to detect potential account switching based on URL patterns
+function hasAccountSwitchingIndicators(newUrl, openerUrl) {
+  try {
+    const newUrlObj = new URL(newUrl);
+    const openerUrlObj = new URL(openerUrl);
+    
+    // Check for account-related parameters or paths
+    const accountIndicators = [
+      'authuser',
+      'user',
+      'account',
+      'signin',
+      'logout',
+      'switch'
+    ];
+    
+    const newParams = newUrlObj.search.toLowerCase();
+    const newPath = newUrlObj.pathname.toLowerCase();
+    const openerParams = openerUrlObj.search.toLowerCase();
+    const openerPath = openerUrlObj.pathname.toLowerCase();
+    
+    // If the new URL has account-related parameters that weren't in the opener
+    for (const indicator of accountIndicators) {
+      if ((newParams.includes(indicator) || newPath.includes(indicator)) &&
+          !(openerParams.includes(indicator) || openerPath.includes(indicator))) {
+        return true;
+      }
+    }
+    
+    // Check if the new URL has a different authuser parameter
+    const newAuthUser = extractAuthUserFromUrl(newUrl);
+    const openerAuthUser = extractAuthUserFromUrl(openerUrl);
+    
+    return newAuthUser !== null && openerAuthUser !== null && newAuthUser !== openerAuthUser;
+  } catch (e) {
+    console.error('[DNR] Error checking account switching indicators:', e);
+    return false;
+  }
+}
+
 // Clean up processed tabs when they are removed
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   const removedData = processedTabs.get(tabId);
   processedTabs.delete(tabId);
+  recentUserInteractions.delete(tabId);
+  temporarySkipRedirects.delete(tabId);
+  
   if (removedData) {
     console.log("[DNR] Cleaned up processed tab:", tabId, "with services:", Array.from(removedData.keys()));
   }

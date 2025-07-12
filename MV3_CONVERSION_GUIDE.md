@@ -211,32 +211,40 @@ The extension now includes sophisticated logic to prevent interference with user
 
 **Key Features:**
 - ✅ **Account Switcher Detection**: Recognizes Google account switcher URLs and skips redirects
-- ✅ **Cooldown Period**: 5-second cooldown prevents immediate re-redirecting after user changes
+- ✅ **Temporary Redirect Suspension**: Automatically disables redirects for 15 seconds when account switching is detected
+- ✅ **Google-to-Google Navigation Protection**: Detects when new tabs are opened from Google services
+- ✅ **Cross-Tab Protection**: Protects both the new tab and the originating tab during account switching
 - ✅ **Smart Account Detection**: Compares current authuser with expected extension defaults
 - ✅ **User Choice Respect**: Updates tracking when users manually change accounts
 
 **How it works:**
 ```javascript
-// User clicks account switcher → Extension detects switcher URL and skips redirect
-// User manually changes from authuser=0 to authuser=2 → Extension updates tracking
-// User navigates within same service → Extension respects authuser=2 choice
-// 5+ seconds later, user navigates to same service → Extension still respects choice
+// User clicks account switcher in Gmail → New tab opens with accounts.google.com
+// Extension detects: Google service (Gmail) → Google URL (accounts)
+// Extension temporarily disables redirects for 15 seconds on BOTH tabs
+// User completes account switching without interference
+// After 15 seconds, normal redirect behavior resumes
 ```
 
-**Protected URLs:**
-- `accounts.google.com` (Account management)
-- URLs containing `/accounts/`, `/signin`, `/logout`
-- Account chooser and service login pages
+**Protected Scenarios:**
+1. **Direct account switcher clicks** → New tab with accounts.google.com
+2. **Account selection pages** → URLs containing account-related paths
+3. **Service-to-service navigation** → When users navigate between Google services during switching
+4. **Multiple tab protection** → Both source and destination tabs are protected
 
 **Behavior Examples:**
 1. **Opening Gmail** → Extension applies default account (authuser=0)
-2. **User clicks account switcher** → Extension doesn't interfere
-3. **User selects different account** → Extension updates tracking for Gmail
-4. **User navigates within Gmail** → Extension respects user's choice
-5. **User opens Google Drive** → Extension applies default account (new service)
-6. **User returns to Gmail** → Extension respects previous Gmail choice
+2. **User clicks account switcher** → New tab opens, extension suspends redirects for 15s
+3. **User selects different account** → Extension doesn't interfere during the process
+4. **User lands on Gmail with new account** → Extension respects the user's choice
+5. **15 seconds later** → Normal redirect behavior resumes for new navigation
 
-This prevents the issue where changing accounts would create new tabs that get automatically redirected.
+**Automatic Recovery:**
+- Temporary suspension automatically expires after 15 seconds
+- Suspension is cleared when tabs are closed
+- Normal extension behavior resumes seamlessly
+
+This completely eliminates the issue where account switching would create new tabs that get automatically redirected!
 
 ## 🔧 Technical Details
 

@@ -181,6 +181,28 @@ function getBaseServiceUrl(url) {
 // Track processed services per tab for Firefox (simpler than Chrome version)
 const processedServices = new Map();
 
+// Track tabs that should temporarily skip redirects (for account switching)
+const temporarySkipRedirects = new Map();
+
+// Temporarily skip redirects for a tab (useful for account switching)
+function temporarilySkipRedirects(tabId, duration = 15000) {
+  temporarySkipRedirects.set(tabId, Date.now() + duration);
+  console.log("[Firefox] Temporarily skipping redirects for tab", tabId, "for", duration, "ms");
+}
+
+// Check if redirects should be temporarily skipped for a tab
+function shouldTemporarilySkipRedirects(tabId) {
+  const skipUntil = temporarySkipRedirects.get(tabId);
+  if (!skipUntil) return false;
+  
+  if (Date.now() > skipUntil) {
+    temporarySkipRedirects.delete(tabId);
+    return false;
+  }
+  
+  return true;
+}
+
 // Clean up old processed services periodically
 setInterval(() => {
   const now = Date.now();
@@ -262,6 +284,12 @@ function handleGoogleServiceRedirect(tabId, url) {
     return false;
   }
   
+  // Check if redirects should be temporarily skipped for this tab
+  if (shouldTemporarilySkipRedirects(tabId)) {
+    console.log("[Firefox] Temporarily skipping redirect for tab", tabId, "due to recent account switching activity");
+    return false;
+  }
+  
   const baseService = getBaseServiceUrl(url);
   const currentAuthUser = extractAuthUserFromUrl(url);
   const accountId = getAccountForService(url);
@@ -331,7 +359,24 @@ chrome.tabs.onCreated.addListener((tab) => {
   
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
-      if (openerTab && isAnyGoogleUrl(openerTab.url)) return;
+      if (chrome.runtime.lastError) {
+        handleGoogleServiceRedirect(tab.id, url);
+        return;
+      }
+      
+      // If the opener is a Google service and we have a new tab, this might be account switching
+      if (openerTab && isGoogleServiceUrl(openerTab.url)) {
+        console.log("[Firefox] New tab opened from Google service:", openerTab.url);
+        
+        // If the new URL is any Google URL, temporarily skip redirects
+        if (isAnyGoogleUrl(url)) {
+          console.log("[Firefox] Google-to-Google navigation detected, temporarily skipping redirects");
+          temporarilySkipRedirects(tab.id, 15000); // 15 seconds
+          temporarilySkipRedirects(tab.openerTabId, 15000);
+          return;
+        }
+      }
+      
       handleGoogleServiceRedirect(tab.id, url);
     });
   } else {
@@ -357,6 +402,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   const removedData = processedServices.get(tabId);
   processedServices.delete(tabId);
+  temporarySkipRedirects.delete(tabId);
+  
   if (removedData) {
     console.log("[Firefox] Cleaned up processed tab:", tabId, "with services:", Array.from(removedData.keys()));
   }
