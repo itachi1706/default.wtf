@@ -8,3 +8,9 @@
 - [Buy us a coffee](https://www.buymeacoffee.com/default)
 
 - [Open source license](https://github.com/uptechteam/default-google-account/blob/dev/LICENSE)
+
+
+Note: This is an attempt to create a MV3 compliant version of this seemingly abandoned extension for my own use. 
+
+**Issues**
+* Cannot use account switcher for now. Workaround is to manually update the URL instead (authuser=x or /u/x, replacing "x" with account number)
