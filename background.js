@@ -102,10 +102,8 @@ async function initializeDeclarativeNetRequestRules() {
   // Clear existing rules
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const ruleIdsToRemove = existingRules.map(rule => rule.id);
-  if (chrome.declarativeNetRequestFeedback) {
-    console.log("[DNR] Existing rules found:", existingRules);
-    console.log("[DNR] Removing existing rules:", ruleIdsToRemove);
-  }
+  console.log("[DNR] Existing rules found:", existingRules);
+  console.log("[DNR] Removing existing rules:", ruleIdsToRemove);
   if (ruleIdsToRemove.length > 0) {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: ruleIdsToRemove
@@ -118,10 +116,8 @@ async function updateDeclarativeNetRequestRules() {
   // Clear existing rules first
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const ruleIdsToRemove = existingRules.map(rule => rule.id);
-  if (chrome.declarativeNetRequestFeedback) {
-    console.log("[DNR] Existing rules before update:", existingRules);
-    console.log("[DNR] Rule IDs to remove:", ruleIdsToRemove);
-  }
+  console.log("[DNR] Existing rules before update:", existingRules);
+  console.log("[DNR] Rule IDs to remove:", ruleIdsToRemove);
   // Create new rules based on current state
   const newRules = [];
   let ruleId = 1;
@@ -209,9 +205,7 @@ async function updateDeclarativeNetRequestRules() {
     removeRuleIds: ruleIdsToRemove,
     addRules: newRules
   });
-  if (chrome.declarativeNetRequestFeedback) {
-    console.log("[DNR] Updated declarativeNetRequest rules:", newRules);
-  }
+  console.log("[DNR] Updated declarativeNetRequest rules:", newRules);
 }
 
 // collect last 4 redirectUrls - keeping for compatibility but not used in MV3
@@ -242,9 +236,7 @@ function handleGoogleServiceRedirect(tabId, url) {
   
   // Check if URL already has authuser parameter to avoid infinite redirects
   if (url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) {
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] URL already has authuser, skipping redirect");
-    }
+    console.log("[DNR] URL already has authuser, skipping redirect");
     return false;
   }
   
@@ -252,10 +244,8 @@ function handleGoogleServiceRedirect(tabId, url) {
   const redirectUrl = convertToRedirectUrl(url, accountId);
   
   if (redirectUrl && redirectUrl !== url) {
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] Redirecting tab from:", url);
-      console.log("[DNR] Redirecting tab to:", redirectUrl);
-    }
+    console.log("[DNR] Redirecting tab from:", url);
+    console.log("[DNR] Redirecting tab to:", redirectUrl);
     chrome.tabs.update(tabId, { url: redirectUrl });
     return true;
   }
@@ -265,10 +255,8 @@ function handleGoogleServiceRedirect(tabId, url) {
 
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
-  if (chrome.declarativeNetRequestFeedback) {
-    console.log("[DNR] Tab created with URL:", url);
-    console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
-  }
+  console.log("[DNR] Tab created with URL:", url);
+  console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
   if (!url) return;
   
   if (tab.openerTabId) {
@@ -285,9 +273,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process when URL is changing and the change is committed
   if (changeInfo.status === 'loading' && changeInfo.url) {
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] Tab updated with URL:", changeInfo.url);
-    }
+    console.log("[DNR] Tab updated with URL:", changeInfo.url);
     handleGoogleServiceRedirect(tabId, changeInfo.url);
   }
 });
@@ -328,7 +314,7 @@ function getAccountForService(url) {
 // Declarative check
 
 // Listen for matched DNR rules if feedback permission is present
-if (chrome.declarativeNetRequestFeedback && chrome.declarativeNetRequest.onRuleMatchedDebug) {
+if (chrome.declarativeNetRequest.onRuleMatchedDebug) {
   chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((info) => {
     console.log('[DNR] Rule matched:', info);
   });
