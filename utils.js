@@ -8,7 +8,7 @@ function isGoogleServiceUrl(url) {
     'adsense', 'cloud', 'adwords', 'analytics', 'firebase', 'play', 'voice',
     'tagmanager', 'duo', 'datastudio', 'optimize', 'merchants', 'finance',
     'colab.research', 'contacts', 'script', 'messages', 'search', 'stadia',
-    'developers', 'one', 'chrome', 'books', 'sites', 'groups'
+    'developers', 'one', 'chrome', 'books', 'sites', 'groups', 'gemini'
   ];
   
   // Check standard Google service subdomains
@@ -344,6 +344,12 @@ function allSupportedGoogleServices() {
       url: "groups.google.com",
       img: "./images/logos/groups.png",
     },
+    {
+      name: "Gemini",
+      title: "Gemini",
+      url: "gemini.google.com",
+      img: "./images/logos/gemini.png",
+    }
   ];
 }
 
