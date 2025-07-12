@@ -2,21 +2,21 @@
   "name": "Default Account for Google™ products",
   "description": "Select and manage your default account for 🎥 Google Meet™, 📩 Gmail™, or any other product.",
   "version": "1.14",
-  "manifest_version": 2,
-  "minimum_chrome_version": "40",
-  "browser_action": {
+  "manifest_version": 3,
+  "minimum_chrome_version": "88",
+  "action": {
     "default_popup": "popup.html"
   },
   "background": {
-    "scripts": ["utils.js", "background.js"],
-    "persistent": true
+    "service_worker": "background.js"
   },
   "permissions": [
     "tabs",
     "storage",
-    "<all_urls>",
-    "webRequest",
-    "webRequestBlocking"
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "commands": {
     "switch_to_ga_1": {

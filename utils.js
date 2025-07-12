@@ -1,14 +1,34 @@
 // Full list of Google Services subdomains - https://gist.github.com/abuvanth/b9fcbaf7c77c2954f96c6e556138ffe8
 function isGoogleServiceUrl(url) {
-  return (
-    /^https?:\/\/[^?&]*(?:mail|drive|calendar|meet|docs|admin|photos|translate|keep|hangouts|chat|workspace|maps|news|ads|ediscovery|jamboard|earth|podcasts|classroom|business|myaccount|adsense|cloud|adwords|analytics|firebase|play|voice|tagmanager|duo|datastudio|optimize|merchants|finance|colab.research|contacts|script|messages|search|stadia|developers|one|chrome|books|sites|groups)\.google\.co.*/i.test(
-      url
-    ) ||
-    // test several services that witched from the patter "https://maps.google.com" -> https://www.google.com/maps
-    /^https?:\/\/(www\.)?google\.co(?:m|\.[a-z]{2,3})\/(?:maps|finance|travel|flights)/i.test(
-      url
-    )
-  );
+  // Split the complex regex into smaller parts for better maintainability
+  const googleServices = [
+    'mail', 'drive', 'calendar', 'meet', 'docs', 'admin', 'photos', 'translate',
+    'keep', 'hangouts', 'chat', 'workspace', 'maps', 'news', 'ads', 'ediscovery',
+    'jamboard', 'earth', 'podcasts', 'classroom', 'business', 'myaccount',
+    'adsense', 'cloud', 'adwords', 'analytics', 'firebase', 'play', 'voice',
+    'tagmanager', 'duo', 'datastudio', 'optimize', 'merchants', 'finance',
+    'colab.research', 'contacts', 'script', 'messages', 'search', 'stadia',
+    'developers', 'one', 'chrome', 'books', 'sites', 'groups'
+  ];
+  
+  // Check standard Google service subdomains
+  for (const service of googleServices) {
+    const serviceRegex = new RegExp(`^https?://[^?&]*${service}\\.google\\.co`, 'i');
+    if (serviceRegex.test(url)) {
+      return true;
+    }
+  }
+  
+  // Check special Google.com paths
+  const googleComPaths = ['maps', 'finance', 'travel', 'flights'];
+  for (const path of googleComPaths) {
+    const pathRegex = new RegExp(`^https?://(www\\.)?google\\.co(?:m|\\.[a-z]{2,3})/${path}`, 'i');
+    if (pathRegex.test(url)) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 function isAnyGoogleUrl(url) {
@@ -17,7 +37,7 @@ function isAnyGoogleUrl(url) {
 
 function redirectCurrectTab(defaultAccount) {
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-    if (tabs && tabs[0] && isGoogleServiceUrl(tabs[0].url)) {
+    if (tabs?.[0]?.url && isGoogleServiceUrl(tabs[0].url)) {
       const url = convertToRedirectUrl(tabs[0].url, defaultAccount);
       if (url) {
         chrome.tabs.update(tabs[0].id, { url });
@@ -34,7 +54,7 @@ function convertToRedirectUrl(originalUrl, defaultAccount) {
   // check if current user is not the same (?authuser={num} or /u/{num}/)
   if (`${params.get("authuser")}` === `${defaultAccount}`) return null;
   const uMatch = originalUrl.match(/\/u\/(\d+)\/?/i);
-  if (uMatch && uMatch[1] && `${uMatch[1]}` === `${defaultAccount}`)
+  if (uMatch?.[1] && `${uMatch[1]}` === `${defaultAccount}`)
     return null;
 
   // current user is different, change

@@ -1,3 +1,6 @@
+// Import utils.js for service worker
+importScripts('utils.js');
+
 let defaultAccount = 0;
 let rules = [];
 let accounts = [];
@@ -15,26 +18,34 @@ chrome.runtime.onInstalled.addListener(function (details) {
       }
     });
   }
+  // Initialize dynamic rules for declarativeNetRequest
+  initializeDeclarativeNetRequestRules();
 });
 
-SyncStorage.get("defaultAccount", (data) => {
-  defaultAccount = data.defaultAccount ?? 0;
-});
+// Initialize state when service worker starts
+async function initializeState() {
+  const [defaultAccountData, rulesData, accountsData] = await Promise.all([
+    new Promise(resolve => SyncStorage.get("defaultAccount", resolve)),
+    new Promise(resolve => SyncStorage.get("rules", resolve)),
+    new Promise(resolve => SyncStorage.get("accounts", resolve))
+  ]);
+  
+  defaultAccount = defaultAccountData.defaultAccount ?? 0;
+  rules = rulesData.rules ?? [];
+  accounts = accountsData.accounts ?? [];
+}
 
-SyncStorage.get("rules", (data) => {
-  rules = data.rules ?? [];
-});
-
-SyncStorage.get("accounts", (data) => {
-  accounts = data.accounts ?? [];
-});
+// Call initialize on startup
+initializeState();
 
 chrome.storage.onChanged.addListener(function (changes, namespace) {
   if ("defaultAccount" in changes) {
     defaultAccount = changes["defaultAccount"].newValue;
+    updateDeclarativeNetRequestRules();
   }
   if ("rules" in changes) {
     rules = changes["rules"].newValue;
+    updateDeclarativeNetRequestRules();
   }
   if ("accounts" in changes) {
     accounts = changes["accounts"].newValue;
@@ -66,7 +77,117 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// collect last 4 redirectUrls
+// Initialize and update declarativeNetRequest rules
+async function initializeDeclarativeNetRequestRules() {
+  // Clear existing rules
+  const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+  const ruleIdsToRemove = existingRules.map(rule => rule.id);
+  
+  if (ruleIdsToRemove.length > 0) {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: ruleIdsToRemove
+    });
+  }
+  
+  await updateDeclarativeNetRequestRules();
+}
+
+async function updateDeclarativeNetRequestRules() {
+  // Clear existing rules first
+  const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+  const ruleIdsToRemove = existingRules.map(rule => rule.id);
+  
+  // Create new rules based on current state
+  const newRules = [];
+  let ruleId = 1;
+  
+  // Create rules for Google services that don't have authuser parameter
+  const googleServicePatterns = [
+    "*://*.mail.google.com/*",
+    "*://*.drive.google.com/*", 
+    "*://*.calendar.google.com/*",
+    "*://*.meet.google.com/*",
+    "*://*.docs.google.com/*",
+    "*://*.admin.google.com/*",
+    "*://*.photos.google.com/*",
+    "*://*.translate.google.com/*",
+    "*://*.keep.google.com/*",
+    "*://*.hangouts.google.com/*",
+    "*://*.chat.google.com/*",
+    "*://*.workspace.google.com/*",
+    "*://*.maps.google.com/*",
+    "*://*.news.google.com/*",
+    "*://*.ads.google.com/*",
+    "*://*.ediscovery.google.com/*",
+    "*://*.jamboard.google.com/*",
+    "*://*.earth.google.com/*",
+    "*://*.podcasts.google.com/*",
+    "*://*.classroom.google.com/*",
+    "*://*.business.google.com/*",
+    "*://*.myaccount.google.com/*",
+    "*://*.adsense.google.com/*",
+    "*://*.cloud.google.com/*",
+    "*://*.adwords.google.com/*",
+    "*://*.analytics.google.com/*",
+    "*://*.firebase.google.com/*",
+    "*://*.play.google.com/*",
+    "*://*.voice.google.com/*",
+    "*://*.tagmanager.google.com/*",
+    "*://*.duo.google.com/*",
+    "*://*.datastudio.google.com/*",
+    "*://*.optimize.google.com/*",
+    "*://*.merchants.google.com/*",
+    "*://*.finance.google.com/*",
+    "*://*.colab.research.google.com/*",
+    "*://*.contacts.google.com/*",
+    "*://*.script.google.com/*",
+    "*://*.messages.google.com/*",
+    "*://*.search.google.com/*",
+    "*://*.stadia.google.com/*",
+    "*://*.developers.google.com/*",
+    "*://*.one.google.com/*",
+    "*://*.chrome.google.com/*",
+    "*://*.books.google.com/*",
+    "*://*.sites.google.com/*",
+    "*://*.groups.google.com/*",
+    "*://www.google.com/maps*",
+    "*://www.google.com/finance*",
+    "*://www.google.com/travel*",
+    "*://www.google.com/flights*"
+  ];
+  
+  for (const pattern of googleServicePatterns) {
+    newRules.push({
+      id: ruleId++,
+      priority: 1,
+      action: {
+        type: "redirect",
+        redirect: {
+          transform: {
+            queryTransform: {
+              addOrReplaceParams: [
+                { key: "authuser", value: defaultAccount.toString() }
+              ]
+            }
+          }
+        }
+      },
+      condition: {
+        urlFilter: pattern,
+        resourceTypes: ["main_frame"],
+        excludedRequestDomains: ["accounts.google.com"]
+      }
+    });
+  }
+  
+  // Update rules
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: ruleIdsToRemove,
+    addRules: newRules
+  });
+}
+
+// collect last 4 redirectUrls - keeping for compatibility but not used in MV3
 let last4RedirectUrls = [];
 const maxRedirectTimeMS = 250;
 
@@ -86,45 +207,7 @@ function detectRedirectCycle(redirectUrl) {
   return last4RedirectUrls.length >= 4;
 }
 
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (
-      details.url &&
-      // filter only get requests from the main_frame (user-initiated)
-      details.method === "GET" &&
-      // test if it's one of the Google services
-      isGoogleServiceUrl(details.url) &&
-      // test if the URL does not contain "authuser" or "/u/0"
-      details.url.toLowerCase().indexOf("authuser") < 0 &&
-      !/https?:\/\/.*\.google\.co.*\/u\/\d+/i.test(details.url)
-    ) {
-      // Check google service is Docs, do not redirect on document creation
-      if (
-        details.url.includes("docs.google") &&
-        details.url.includes("/create")
-      ) {
-        return;
-      }
-      //
-      const accountId = getAccountForService(details.url);
-      const redirectUrl = convertToRedirectUrl(details.url, accountId);
-      // Cos with "0" there are many redirect problems, and Google handles it anyway
-      // isAccountLoggedIn - cos there will be ERR_TOO_MANY_REDIRECTS
-      if (redirectUrl && accountId !== 0 && isAccountLoggedIn(accountId)) {
-        if (detectRedirectCycle(redirectUrl)) return; // ERR_TOO_MENY_REQUESTS (detecting a redirect cycle)
-        return { redirectUrl };
-      }
-    }
-  },
-  // filters
-  {
-    // types: ["main_frame", "sub_frame"],
-    types: ["main_frame"],
-    urls: ["<all_urls>"],
-  },
-  // extraInfoSpec
-  ["blocking"]
-);
+// Legacy webRequest code removed - replaced with declarativeNetRequest above
 
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
@@ -169,7 +252,7 @@ function isAccountLoggedIn(accountIndex) {
 function getAccountForService(url) {
   for (const rule of rules) {
     const reg = new RegExp(
-      `^https?:\/\/[^?&]*${rule.serviceName.toLowerCase()}\.google\.co.*`,
+      `^https?://[^?&]*${rule.serviceName.toLowerCase()}\\.google\\.co.*`,
       "is"
     );
     if (reg.test(url)) {
