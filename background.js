@@ -102,6 +102,8 @@ async function initializeDeclarativeNetRequestRules() {
   // Clear existing rules
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const ruleIdsToRemove = existingRules.map(rule => rule.id);
+  console.log("Existing rules found:", existingRules);
+  console.log("Removing existing rules:", ruleIdsToRemove);
   
   if (ruleIdsToRemove.length > 0) {
     await chrome.declarativeNetRequest.updateDynamicRules({
@@ -206,6 +208,7 @@ async function updateDeclarativeNetRequestRules() {
     removeRuleIds: ruleIdsToRemove,
     addRules: newRules
   });
+  console.log("Updated declarativeNetRequest rules:", newRules);
 }
 
 // collect last 4 redirectUrls - keeping for compatibility but not used in MV3
@@ -233,6 +236,7 @@ function detectRedirectCycle(redirectUrl) {
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
   console.log("Tab created with URL:", url);
+  console.log("Check if Google service URL:", isGoogleServiceUrl(url));
   if (!url || !isGoogleServiceUrl(url)) return;
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {

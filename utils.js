@@ -36,6 +36,7 @@ function isAnyGoogleUrl(url) {
 }
 
 function redirectCurrectTab(defaultAccount) {
+  console.log("redirectCurrectTab", defaultAccount);
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     if (tabs?.[0]?.url && isGoogleServiceUrl(tabs[0].url)) {
       const url = convertToRedirectUrl(tabs[0].url, defaultAccount);
