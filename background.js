@@ -59,12 +59,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     fetch(url)
       .then((response) => response.text())
       .then(function (rawText) {
-        const parser = new DOMParser();
-        const html = parser
-          .parseFromString(rawText, "application/xml")
-          .querySelector("script").innerHTML;
-        return html
-          .split("'")[1]
+        // Service workers don't have DOMParser, so we'll parse the script content manually
+        // Look for the script tag and extract its content
+        const scriptRegex = /<script[^>]*>(.*?)<\/script>/s;
+        const scriptMatch = scriptRegex.exec(rawText);
+        if (!scriptMatch) {
+          throw new Error("Could not find script tag in response");
+        }
+        
+        const scriptContent = scriptMatch[1];
+        
+        // Extract the JSON data from the script content
+        // The data is typically in a format like: ...'],"some data here",...
+        const jsonRegex = /'([^']+)'/;
+        const jsonMatch = jsonRegex.exec(scriptContent);
+        if (!jsonMatch) {
+          throw new Error("Could not extract JSON data from script");
+        }
+        
+        const encodedData = jsonMatch[1];
+        
+        // Decode the escaped data
+        return encodedData
           .replace(/\\x([0-9a-fA-F]{2})/g, (match, paren) =>
             String.fromCharCode(parseInt(paren, 16))
           )
@@ -72,7 +88,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .replace(/\\n/g, "");
       })
       .then((text) => JSON.parse(text))
-      .then(sendResponse);
+      .then(sendResponse)
+      .catch((error) => {
+        console.error("Error fetching Google accounts:", error);
+        sendResponse({ error: error.message });
+      });
     return true;
   }
 });

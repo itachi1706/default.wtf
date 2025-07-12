@@ -138,6 +138,37 @@ function isGoogleServiceUrl(url) {
 }
 ```
 
+## 🔧 Technical Details
+
+### Service Worker Limitations (MV3)
+
+The Chrome extension uses a service worker which has certain limitations compared to traditional background pages:
+
+- ❌ **No DOM APIs**: `DOMParser`, `document`, `window` are not available
+- ❌ **No persistent state**: Variables are reset when the service worker terminates
+- ✅ **Web APIs**: `fetch`, `chrome.*` APIs, and basic JavaScript are available
+
+### Google Account Fetching
+
+Both Chrome and Firefox versions now use regex-based HTML parsing instead of `DOMParser`:
+
+```javascript
+// Service worker compatible parsing
+const scriptRegex = /<script[^>]*>(.*?)<\/script>/s;
+const scriptMatch = scriptRegex.exec(rawText);
+const scriptContent = scriptMatch[1];
+
+const jsonRegex = /'([^']+)'/;
+const jsonMatch = jsonRegex.exec(scriptContent);
+const encodedData = jsonMatch[1];
+```
+
+This approach:
+- ✅ Works in both service workers and background pages
+- ✅ Provides consistent behavior across browsers
+- ✅ Includes proper error handling
+- ✅ Maintains the same functionality
+
 ## Browser Compatibility
 
 ### Chrome (MV3)
