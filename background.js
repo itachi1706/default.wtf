@@ -236,26 +236,59 @@ function detectRedirectCycle(redirectUrl) {
 
 // Legacy webRequest code removed - replaced with declarativeNetRequest above
 
+// Helper function to handle Google service redirects
+function handleGoogleServiceRedirect(tabId, url) {
+  if (!isGoogleServiceUrl(url)) return false;
+  
+  // Check if URL already has authuser parameter to avoid infinite redirects
+  if (url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) {
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] URL already has authuser, skipping redirect");
+    }
+    return false;
+  }
+  
+  const accountId = getAccountForService(url);
+  const redirectUrl = convertToRedirectUrl(url, accountId);
+  
+  if (redirectUrl && redirectUrl !== url) {
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Redirecting tab from:", url);
+      console.log("[DNR] Redirecting tab to:", redirectUrl);
+    }
+    chrome.tabs.update(tabId, { url: redirectUrl });
+    return true;
+  }
+  
+  return false;
+}
+
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
-  console.log("Tab created with URL:", url);
-  console.log("Check if Google service URL:", isGoogleServiceUrl(url));
-  if (!url || !isGoogleServiceUrl(url)) return;
+  if (chrome.declarativeNetRequestFeedback) {
+    console.log("[DNR] Tab created with URL:", url);
+    console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
+  }
+  if (!url) return;
+  
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
       if (openerTab && isAnyGoogleUrl(openerTab.url)) return;
-      const accountId = getAccountForService(url);
-      const redirectUrl = convertToRedirectUrl(url, accountId);
-      if (redirectUrl) {
-        chrome.tabs.update(tab.id, { url: redirectUrl });
-      }
+      handleGoogleServiceRedirect(tab.id, url);
     });
   } else {
-    const accountId = getAccountForService(url);
-    const redirectUrl = convertToRedirectUrl(url, accountId);
-    if (redirectUrl) {
-      chrome.tabs.update(tab.id, { url: redirectUrl });
+    handleGoogleServiceRedirect(tab.id, url);
+  }
+});
+
+// Handle navigation in existing tabs
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Only process when URL is changing and the change is committed
+  if (changeInfo.status === 'loading' && changeInfo.url) {
+    if (chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Tab updated with URL:", changeInfo.url);
     }
+    handleGoogleServiceRedirect(tabId, changeInfo.url);
   }
 });
 

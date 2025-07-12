@@ -138,6 +138,26 @@ function isGoogleServiceUrl(url) {
 }
 ```
 
+### 4. Tab Navigation Handling
+
+Both Chrome MV3 and Firefox versions now handle navigation in existing tabs, not just new tab creation:
+
+**Chrome MV3 (background.js):**
+- Uses `chrome.tabs.onCreated` for new tabs
+- Uses `chrome.tabs.onUpdated` for existing tab navigation
+- Combined with declarativeNetRequest for comprehensive coverage
+
+**Firefox (background_firefox.js):**
+- Uses `chrome.webRequest.onBeforeRequest` for all navigation
+- Uses `chrome.tabs.onCreated` and `chrome.tabs.onUpdated` as fallback
+- Provides consistent behavior across navigation types
+
+**Key improvements:**
+- ✅ Handles existing tab navigation to Google services
+- ✅ Prevents infinite redirect loops
+- ✅ Maintains consistent behavior between browsers
+- ✅ Reduced code complexity with helper functions
+
 ## 🔧 Technical Details
 
 ### Service Worker Limitations (MV3)

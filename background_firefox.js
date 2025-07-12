@@ -150,24 +150,45 @@ chrome.webRequest.onBeforeRequest.addListener(
   ["blocking"]
 );
 
+// Helper function to handle Google service redirects
+function handleGoogleServiceRedirect(tabId, url) {
+  if (!isGoogleServiceUrl(url)) return false;
+  
+  // Check if URL already has authuser parameter to avoid infinite redirects
+  if (url.toLowerCase().includes("authuser") || /\/u\/\d+/.test(url)) {
+    return false;
+  }
+  
+  const accountId = getAccountForService(url);
+  const redirectUrl = convertToRedirectUrl(url, accountId);
+  
+  if (redirectUrl && redirectUrl !== url) {
+    chrome.tabs.update(tabId, { url: redirectUrl });
+    return true;
+  }
+  
+  return false;
+}
+
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
-  if (!url || !isGoogleServiceUrl(url)) return;
+  if (!url) return;
+  
   if (tab.openerTabId) {
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
       if (openerTab && isAnyGoogleUrl(openerTab.url)) return;
-      const accountId = getAccountForService(url);
-      const redirectUrl = convertToRedirectUrl(url, accountId);
-      if (redirectUrl) {
-        chrome.tabs.update(tab.id, { url: redirectUrl });
-      }
+      handleGoogleServiceRedirect(tab.id, url);
     });
   } else {
-    const accountId = getAccountForService(url);
-    const redirectUrl = convertToRedirectUrl(url, accountId);
-    if (redirectUrl) {
-      chrome.tabs.update(tab.id, { url: redirectUrl });
-    }
+    handleGoogleServiceRedirect(tab.id, url);
+  }
+});
+
+// Handle navigation in existing tabs
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Only process when URL is changing and the change is committed
+  if (changeInfo.status === 'loading' && changeInfo.url) {
+    handleGoogleServiceRedirect(tabId, changeInfo.url);
   }
 });
 
