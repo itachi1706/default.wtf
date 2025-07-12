@@ -280,10 +280,8 @@ setInterval(() => {
     // Remove tab entry if no services remain
     if (tabData.size === 0) {
       processedTabs.delete(tabId);
-      if (chrome.declarativeNetRequestFeedback) {
-        console.log("[DNR] Cleaned up old processed tab:", tabId);
-      }
-    } else if (servicesToRemove.length > 0 && chrome.declarativeNetRequestFeedback) {
+      console.log("[DNR] Cleaned up old processed tab:", tabId);
+    } else if (servicesToRemove.length > 0) {
       console.log("[DNR] Cleaned up old processed services for tab", tabId, ":", servicesToRemove);
     }
   }
@@ -299,15 +297,11 @@ function shouldSkipRedirect(tabId, url, isFirstNavigation) {
   if (!hasAuthUser) return false;
   
   if (!isFirstTimeForService) {
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] URL already has authuser and not first navigation for service", baseService, ", skipping redirect");
-    }
+    console.log("[DNR] URL already has authuser and not first navigation for service", baseService, ", skipping redirect");
     return true;
   }
   
-  if (chrome.declarativeNetRequestFeedback) {
-    console.log("[DNR] First navigation to service", baseService, "with authuser - will override with default account");
-  }
+  console.log("[DNR] First navigation to service", baseService, "with authuser - will override with default account");
   return false;
 }
 
@@ -322,12 +316,10 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   const baseService = getBaseServiceUrl(url);
   
   if (redirectUrl && redirectUrl !== url) {
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] Redirecting tab from:", url);
-      console.log("[DNR] Redirecting tab to:", redirectUrl);
-      console.log("[DNR] Service:", baseService);
-      console.log("[DNR] Is first navigation to service:", isFirstNavigation || !processedTabs.get(tabId)?.has(baseService));
-    }
+    console.log("[DNR] Redirecting tab from:", url);
+    console.log("[DNR] Redirecting tab to:", redirectUrl);
+    console.log("[DNR] Service:", baseService);
+    console.log("[DNR] Is first navigation to service:", isFirstNavigation || !processedTabs.get(tabId)?.has(baseService));
     
     // Mark this service as processed for this tab
     if (!processedTabs.has(tabId)) {
@@ -354,9 +346,7 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
       timestamp: Date.now()
     });
     
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] Marked service", baseService, "as processed for tab", tabId);
-    }
+    console.log("[DNR] Marked service", baseService, "as processed for tab", tabId);
   }
   
   return false;
@@ -364,10 +354,8 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
 
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
-  if (chrome.declarativeNetRequestFeedback) {
-    console.log("[DNR] Tab created with URL:", url);
-    console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
-  }
+  console.log("[DNR] Tab created with URL:", url);
+  console.log("[DNR] Check if Google service URL:", isGoogleServiceUrl(url));
   if (!url) return;
   
   if (tab.openerTabId) {
@@ -384,9 +372,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process when URL is changing and the change is committed
   if (changeInfo.status === 'loading' && changeInfo.url) {
-    if (chrome.declarativeNetRequestFeedback) {
-      console.log("[DNR] Tab updated with URL:", changeInfo.url);
-    }
+    console.log("[DNR] Tab updated with URL:", changeInfo.url);
     handleGoogleServiceRedirect(tabId, changeInfo.url, false); // Not first navigation
   }
 });
@@ -395,7 +381,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   const removedData = processedTabs.get(tabId);
   processedTabs.delete(tabId);
-  if (chrome.declarativeNetRequestFeedback && removedData) {
+  if (removedData) {
     console.log("[DNR] Cleaned up processed tab:", tabId, "with services:", Array.from(removedData.keys()));
   }
 });
