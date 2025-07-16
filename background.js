@@ -473,7 +473,7 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   return false;
 }
 
-function checkOpenerTabStatusAndRedirect(tabId, url, firstNav) {
+function checkOpenerTabStatusAndRedirect(tab, tabId, url, firstNav) {
   if (tab.openerTabId) {
     console.log("[DNR] Has Opener Id:", tab.openerTabId);
     chrome.tabs.get(tab.openerTabId, (openerTab) => {
@@ -518,7 +518,7 @@ chrome.tabs.onCreated.addListener((tab) => {
     return;
   }
 
-  checkOpenerTabStatusAndRedirect(tab.id, url, true); // Mark as first navigation
+  checkOpenerTabStatusAndRedirect(tab, tab.id, url, true); // Mark as first navigation
 });
 
 // Handle navigation in existing tabs
@@ -534,7 +534,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
 
     // Check opener tab
-    checkOpenerTabStatusAndRedirect(tabId, changeInfo.url, false); // Not first navigation
+    checkOpenerTabStatusAndRedirect(tab, tabId, changeInfo.url, false); // Not first navigation
     // handleGoogleServiceRedirect(tabId, changeInfo.url, false); // Not first navigation
   }
 });
