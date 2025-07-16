@@ -473,6 +473,40 @@ function handleGoogleServiceRedirect(tabId, url, isFirstNavigation = false) {
   return false;
 }
 
+function checkOpenerTabStatusAndRedirect(tabId, url, firstNav) {
+  if (tab.openerTabId) {
+    console.log("[DNR] Has Opener Id:", tab.openerTabId);
+    chrome.tabs.get(tab.openerTabId, (openerTab) => {
+      if (chrome.runtime.lastError) {
+        // If we can't get opener tab info, proceed with normal handling
+        handleGoogleServiceRedirect(tabId, url, firstNav);
+        return;
+      }
+      console.log("[DNR] Opener URL:", openerTab.url);
+      
+      // If the opener is a Google service and we have a new tab, this might be account switching
+      if (openerTab && isGoogleServiceUrl(openerTab.url)) {
+        console.log("[DNR] New tab opened from Google service:", openerTab.url);
+        
+        // If the new URL is any Google URL (service or accounts), temporarily skip redirects
+        // This handles cases where account switching opens intermediate pages
+        if (isAnyGoogleUrl(url)) {
+          console.log("[DNR] Google-to-Google navigation detected, temporarily skipping redirects to allow account switching");
+          temporarilySkipRedirects(tabId, 15000); // 15 seconds
+          
+          // Also temporarily skip redirects on the opener tab in case it gets redirected
+          temporarilySkipRedirects(tab.openerTabId, 15000);
+          return;
+        }
+      }
+      
+      handleGoogleServiceRedirect(tabId, url, firstNav);
+    });
+  } else {
+    handleGoogleServiceRedirect(tabId, url, firstNav);
+  }
+}
+
 chrome.tabs.onCreated.addListener((tab) => {
   const url = tab.pendingUrl || tab.url;
   console.log("[DNR] Tab created with URL:", url, ", isGoogle: ", isGoogleServiceUrl(url));
@@ -483,36 +517,8 @@ chrome.tabs.onCreated.addListener((tab) => {
     console.log("[DNR] Account switcher URL detected, skipping redirect");
     return;
   }
-  
-  if (tab.openerTabId) {
-    chrome.tabs.get(tab.openerTabId, (openerTab) => {
-      if (chrome.runtime.lastError) {
-        // If we can't get opener tab info, proceed with normal handling
-        handleGoogleServiceRedirect(tab.id, url, true);
-        return;
-      }
-      
-      // If the opener is a Google service and we have a new tab, this might be account switching
-      if (openerTab && isGoogleServiceUrl(openerTab.url)) {
-        console.log("[DNR] New tab opened from Google service:", openerTab.url);
-        
-        // If the new URL is any Google URL (service or accounts), temporarily skip redirects
-        // This handles cases where account switching opens intermediate pages
-        if (isAnyGoogleUrl(url)) {
-          console.log("[DNR] Google-to-Google navigation detected, temporarily skipping redirects to allow account switching");
-          temporarilySkipRedirects(tab.id, 15000); // 15 seconds
-          
-          // Also temporarily skip redirects on the opener tab in case it gets redirected
-          temporarilySkipRedirects(tab.openerTabId, 15000);
-          return;
-        }
-      }
-      
-      handleGoogleServiceRedirect(tab.id, url, true); // Mark as first navigation
-    });
-  } else {
-    handleGoogleServiceRedirect(tab.id, url, true); // Mark as first navigation
-  }
+
+  checkOpenerTabStatusAndRedirect(tab.id, url, true); // Mark as first navigation
 });
 
 // Handle navigation in existing tabs
@@ -528,35 +534,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
 
     // Check opener tab
-    if (tab.openerTabId) {
-      chrome.tabs.get(tab.openerTabId, (openerTab) => {
-        if (chrome.runtime.lastError) {
-          // If we can't get opener tab info, proceed with normal handling
-          handleGoogleServiceRedirect(tab.id, changeInfo.url, true);
-          return;
-        }
-        
-        // If the opener is a Google service and we have a new tab, this might be account switching
-        if (openerTab && isGoogleServiceUrl(openerTab.url)) {
-          console.log("[DNR] New tab opened from Google service:", openerTab.url);
-          
-          // If the new URL is any Google URL (service or accounts), temporarily skip redirects
-          // This handles cases where account switching opens intermediate pages
-          if (isAnyGoogleUrl(changeInfo.url)) {
-            console.log("[DNR] Google-to-Google navigation detected, temporarily skipping redirects to allow account switching");
-            temporarilySkipRedirects(tab.id, 15000); // 15 seconds
-            
-            // Also temporarily skip redirects on the opener tab in case it gets redirected
-            temporarilySkipRedirects(tab.openerTabId, 15000);
-            return;
-          }
-        }
-        
-        handleGoogleServiceRedirect(tab.id, changeInfo.url, false); // Not first navigation
-      });
-    } else {
-      handleGoogleServiceRedirect(tab.id, changeInfo.url, false); // Not first navigation
-    }
+    checkOpenerTabStatusAndRedirect(tabId, changeInfo.url, false); // Not first navigation
     // handleGoogleServiceRedirect(tabId, changeInfo.url, false); // Not first navigation
   }
 });
